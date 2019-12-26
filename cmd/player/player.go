@@ -254,12 +254,12 @@ func (player *Player) setPosition(ms int64) {
 }
 
 func (player *Player) syncPosition(ms int64) error {
-	if !player.HasPosition || !player.HasTrackId {
-		return errors.New("Player does not have a position or a trackid")
+	if !player.HasTrackId {
+		return errors.New("Player does not have a trackid")
 	}
 
 	if !player.TrackId.IsValid() {
-		return errors.New(fmt.Sprintf("Player has an invalid trackid: %s", player.TrackId))
+		return errors.New(fmt.Sprintf("Player has an invalid trackid: '%s'", player.TrackId))
 	}
 
 	log.Printf("[DEBUG] Syncing player position to %s", FormatPosition(ms))
