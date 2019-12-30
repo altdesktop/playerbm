@@ -46,8 +46,6 @@ type Player struct {
 	BusName         string
 	NameOwner       string
 	MprisObj        dbus.BusObject
-	Url             string
-	HasUrl          bool
 	Position        int64
 	PositionTime    time.Time
 	TrackId         dbus.ObjectPath
@@ -158,29 +156,24 @@ func (player *Player) setProperties(properties map[string]dbus.Variant) {
 			// get the trackid
 			if variant, found := metadata["mpris:trackid"]; found {
 				if trackid, ok := variant.Value().(dbus.ObjectPath); ok {
+					log.Printf("[DEBUG] trackid found: %s", trackid)
 					player.TrackId = trackid
-					if len(trackid) > 0 {
-						log.Printf("[DEBUG] trackid found: %s", trackid)
-						player.HasTrackId = true
-					}
 				}
 			}
 
 			// get the url
 			if variant, found := metadata["xesam:url"]; found {
 				if url, ok := variant.Value().(string); ok {
-					if len(url) > 0 && player.Url != url {
-						log.Printf("[DEBUG] url changed from: '%s' to '%s'", player.Url, url)
+					if len(url) > 0 {
+						log.Printf("[DEBUG] url changed to '%s'", url)
 						err := player.updateBookmark()
 						if err != nil {
 							log.Printf("[DEBUG] could not update bookmark: %v", err)
 						}
-						player.Url = url
-						player.HasUrl = true
 						if hasLength {
 							player.Length = length
 						}
-						err = player.restoreBookmark()
+						err = player.loadBookmark(url)
 						if err != nil {
 							log.Printf("[DEBUG] could not restore bookmark: %v", err)
 						}
@@ -248,7 +241,11 @@ func (player *Player) logPosition() {
 }
 
 func (player *Player) logCurrentBookmark() {
-	log.Printf("[DEBUG] bookmark: url=%s, position=%s", player.CurrentBookmark.Url, FormatPosition(player.CurrentBookmark.Position))
+	if player.CurrentBookmark == nil {
+		log.Printf("[DEBUG] no current bookmark")
+	} else {
+		log.Printf("[DEBUG] bookmark: url=%s, position=%s", player.CurrentBookmark.Url, FormatPosition(player.CurrentBookmark.Position))
+	}
 }
 
 func (player *Player) setPosition(ms int64) {
@@ -257,7 +254,7 @@ func (player *Player) setPosition(ms int64) {
 }
 
 func (player *Player) syncPosition(ms int64) error {
-	if !player.HasTrackId {
+	if len(player.TrackId) == 0 {
 		return errors.New("Player does not have a trackid")
 	}
 
@@ -319,34 +316,22 @@ func (player *Player) handleNameOwnerChanged(message *dbus.Signal) bool {
 	return false
 }
 
-func (player *Player) ensureCurrentBookmark() error {
-	if !player.HasUrl {
-		player.CurrentBookmark = nil
-		return errors.New("player does not have url, no current bookmark")
+func (player *Player) loadBookmark(url string) error {
+	player.logCurrentBookmark()
+
+	if player.CurrentBookmark != nil && player.CurrentBookmark.Url == url {
+		log.Printf("[DEBUG] url unchanged, not loading bookmark")
+		return nil
 	}
 
-	if player.CurrentBookmark == nil || player.CurrentBookmark.Url != player.Url {
-		bookmark, err := model.GetBookmark(player.DB, player.Url)
-		if err != nil {
-			return err
-		}
-		player.CurrentBookmark = bookmark
-	}
-
-	return nil
-}
-
-func (player *Player) restoreBookmark() error {
-	log.Printf("[DEBUG] restoring bookmark")
-	err := player.ensureCurrentBookmark()
+	bookmark, err := model.GetBookmark(player.DB, url)
 	if err != nil {
 		return err
 	}
-	player.logCurrentBookmark()
 
-	if player.CurrentBookmark.Exists() {
-		log.Printf("[DEBUG] bookmark exists, syncing to position %s", FormatPosition(player.CurrentBookmark.Position))
-		err = player.syncPosition(player.CurrentBookmark.Position)
+	if bookmark.Exists() {
+		log.Printf("[DEBUG] bookmark exists, syncing to position %s", FormatPosition(bookmark.Position))
+		err = player.syncPosition(bookmark.Position)
 		if err != nil {
 			return err
 		}
@@ -354,17 +339,20 @@ func (player *Player) restoreBookmark() error {
 		log.Printf("[DEBUG] bookmark does not exist, not restoring")
 	}
 
+	player.CurrentBookmark = bookmark
+	player.logCurrentBookmark()
+
 	return nil
 }
 
 func (player *Player) updateBookmark() error {
-	log.Printf("[DEBUG] updating bookmark")
-	err := player.ensureCurrentBookmark()
-	if err != nil {
-		return err
+	if player.CurrentBookmark == nil {
+		log.Printf("[DEBUG] no current bookmark to update")
+		return nil
 	}
 
 	position := player.currentPosition()
+	log.Printf("[DEBUG] saving bookmark to position: %s", FormatPosition(position))
 	threshold := int64(1e+7)
 	if position < threshold {
 		log.Printf("[DEBUG] at the beginning threshold, deleting bookmark")
@@ -376,7 +364,6 @@ func (player *Player) updateBookmark() error {
 
 	player.CurrentBookmark.Position = position
 	player.logCurrentBookmark()
-	log.Printf("[DEBUG] saving bookmark to position: %s", FormatPosition(position))
 	return player.CurrentBookmark.Save(player.DB)
 }
 
