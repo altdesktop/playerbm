@@ -47,7 +47,6 @@ type Player struct {
 	Url             string
 	HasUrl          bool
 	Position        int64
-	HasPosition     bool
 	PositionTime    time.Time
 	TrackId         dbus.ObjectPath
 	HasTrackId      bool
@@ -115,7 +114,7 @@ func InitPlayer(cli *cli.PbmCli, db *sql.DB) (*Player, error) {
 			var pid int
 			err := busObj.Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
 			if err != nil {
-				log.Print(err)
+				log.Printf("[DEBUG] could not get process id: %v", err)
 			}
 			log.Printf("[DEBUG] pid: %d", pid)
 			if player.Cmd.Process.Pid == pid {
@@ -170,13 +169,19 @@ func (player *Player) setProperties(properties map[string]dbus.Variant) {
 				if url, ok := variant.Value().(string); ok {
 					if len(url) > 0 && player.Url != url {
 						log.Printf("[DEBUG] url changed from: '%s' to '%s'", player.Url, url)
-						player.updateBookmark()
+						err := player.updateBookmark()
+						if err != nil {
+							log.Printf("[DEBUG] could not update bookmark: %v", err)
+						}
 						player.Url = url
 						player.HasUrl = true
 						if hasLength {
 							player.Length = length
 						}
-						player.restoreBookmark()
+						err = player.restoreBookmark()
+						if err != nil {
+							log.Printf("[DEBUG] could not restore bookmark: %v", err)
+						}
 					}
 				}
 			}
@@ -221,9 +226,6 @@ func (player *Player) setProperties(properties map[string]dbus.Variant) {
 }
 
 func (player *Player) currentPosition() int64 {
-	if !player.HasPosition {
-		return 0
-	}
 	if player.Status == Playing {
 		return player.Position + time.Since(player.PositionTime).Microseconds()
 	} else {
@@ -248,7 +250,6 @@ func (player *Player) logCurrentBookmark() {
 }
 
 func (player *Player) setPosition(ms int64) {
-	player.HasPosition = true
 	player.Position = ms
 	player.PositionTime = time.Now()
 }
@@ -317,9 +318,9 @@ func (player *Player) handleNameOwnerChanged(message *dbus.Signal) bool {
 }
 
 func (player *Player) ensureCurrentBookmark() error {
-	if !player.HasUrl || !player.HasPosition {
+	if !player.HasUrl {
 		player.CurrentBookmark = nil
-		return errors.New("player does not have url or position, no current bookmark")
+		return errors.New("player does not have url, no current bookmark")
 	}
 
 	if player.CurrentBookmark == nil || player.CurrentBookmark.Url != player.Url {
@@ -418,7 +419,7 @@ func (player *Player) Run() error {
 
 	err = player.updateBookmark()
 	if err != nil {
-		log.Print(err)
+		log.Printf("[DEBUG] could not update bookmark: %v", err)
 	}
 
 	return player.Cmd.Wait()

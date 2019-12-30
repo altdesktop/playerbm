@@ -3,6 +3,7 @@ module github.com/altdesktop/playerbm
 go 1.13
 
 require (
+	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
 	github.com/godbus/dbus v4.1.0+incompatible
 	github.com/godbus/dbus/v5 v5.0.3
 	github.com/google/uuid v1.1.1
