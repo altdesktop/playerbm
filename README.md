@@ -24,8 +24,12 @@ go get -u github.com/altdesktop/playerbm
 
 playerbm should support any media player that implements the [MPRIS D-Bus Interface Specification](https://specifications.freedesktop.org/mpris-spec/latest/). If your player does not work well with playerbm, open an issue on Github and I'll look into supporting it. Contributions are welcome.
 
+Known working players:
+
+* [mpv](https://github.com/mpv-player/mpv) with [mpv-mpris](https://github.com/hoyon/mpv-mpris) plugin.
+
 ## License
 
-You can use this code under an MIT license (see LICESNSE).
+You can use this code under an MIT license (see LICENSE).
 
 © 2019, Tony Crisci
