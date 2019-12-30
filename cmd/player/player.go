@@ -10,7 +10,9 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -378,6 +380,20 @@ func (player *Player) updateBookmark() error {
 	return player.CurrentBookmark.Save(player.DB)
 }
 
+func (player *Player) installSignalHandlers() {
+	go func() {
+		signals := make(chan os.Signal, 10)
+		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+		for {
+			s := <-signals
+			err := player.Cmd.Process.Signal(s)
+			if err != nil {
+				log.Printf("[WARNING] could not send signal to player process: %v", err)
+			}
+		}
+	}()
+}
+
 func (player *Player) Run() error {
 	properties, err := player.getProperties()
 	if err != nil {
@@ -385,6 +401,14 @@ func (player *Player) Run() error {
 	}
 
 	player.setProperties(properties)
+	player.installSignalHandlers()
+
+	defer func() {
+		err = player.updateBookmark()
+		if err != nil {
+			log.Printf("[DEBUG] could not update bookmark: %v", err)
+		}
+	}()
 
 	// start the main loop
 	c := make(chan *dbus.Signal, 10)
@@ -415,11 +439,6 @@ func (player *Player) Run() error {
 				break
 			}
 		}
-	}
-
-	err = player.updateBookmark()
-	if err != nil {
-		log.Printf("[DEBUG] could not update bookmark: %v", err)
 	}
 
 	return player.Cmd.Wait()
