@@ -19,7 +19,7 @@ type PbmCli struct {
 }
 
 func setupDBPath() (string, error) {
-	pathDir := path.Join(xdg.CacheHome(), "player-bookmark")
+	pathDir := path.Join(xdg.CacheHome(), "playerbm")
 	// TODO move directory making to InitDB()
 	err := os.MkdirAll(pathDir, 0775)
 	if err != nil {

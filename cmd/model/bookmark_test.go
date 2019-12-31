@@ -33,9 +33,10 @@ func TestBookmarkSave(t *testing.T) {
 	require.NotNil(t, bm.Hash)
 	require.Equal(t, len(bm.Hash), 64, "The bookmark hash should be a valid sha256 hex digest")
 	require.True(t, bm.needsCreate, "The bookmark should not already exist")
-	bm.Save(db)
+	err = bm.Save(db)
+	require.NoError(t, err)
 	require.NotEqual(t, bm.Id, 0, "After save, the bookmark should have a database id")
-	require.False(t, bm.needsCreate)
+	require.True(t, bm.Exists(), "After save, the bookmark should be marked as exists")
 
 	// Update the position, save the bookmark, and make sure it propagates to
 	// the database

@@ -34,8 +34,12 @@ func InitDb(path string) (*sql.DB, error) {
         CREATE TABLE bookmarks (
             id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
             url TEXT,
+            position INTEGER,
+            length INTEGER,
             hash TEXT,
-            position INTEGER
+            inode TEXT, -- uint64
+            mtime INTEGER,
+            finished INTEGER -- boolean
         );
         PRAGMA user_version = 1;
         `

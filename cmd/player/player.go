@@ -140,6 +140,14 @@ func (player *Player) getProperties() (map[string]dbus.Variant, error) {
 }
 
 func (player *Player) setProperties(properties map[string]dbus.Variant) {
+	// get the position
+	if variant, found := properties["Position"]; found {
+		if position, ok := variant.Value().(int64); ok {
+			log.Printf("[DEBUG] position has changed from '%s' to '%s'", FormatPosition(player.currentPosition()), FormatPosition(position))
+			player.setPosition(position)
+		}
+	}
+
 	if metadataVariant, found := properties["Metadata"]; found {
 		if metadata, ok := metadataVariant.Value().(map[string]dbus.Variant); ok {
 			var hasLength = false
@@ -184,14 +192,6 @@ func (player *Player) setProperties(properties map[string]dbus.Variant) {
 			if hasLength {
 				player.Length = length
 			}
-		}
-	}
-
-	// get the position
-	if variant, found := properties["Position"]; found {
-		if position, ok := variant.Value().(int64); ok {
-			log.Printf("[DEBUG] position has changed from '%s' to '%s'", FormatPosition(player.currentPosition()), FormatPosition(position))
-			player.setPosition(position)
 		}
 	}
 
@@ -263,7 +263,11 @@ func (player *Player) syncPosition(ms int64) error {
 	}
 
 	log.Printf("[DEBUG] Syncing player position to %s", FormatPosition(ms))
-	err := player.MprisObj.Call("org.mpris.MediaPlayer2.Player.SetPosition", 0, player.TrackId, ms).Store()
+	err := player.MprisObj.Call("org.mpris.MediaPlayer2.Player.Play", 0).Store()
+	if err != nil {
+		return err
+	}
+	err = player.MprisObj.Call("org.mpris.MediaPlayer2.Player.SetPosition", 0, player.TrackId, ms).Store()
 	if err != nil {
 		return err
 	}
