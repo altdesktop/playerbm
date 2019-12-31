@@ -6,8 +6,11 @@ import (
 	"github.com/altdesktop/playerbm/cmd/cli"
 	"github.com/altdesktop/playerbm/cmd/model"
 	"github.com/altdesktop/playerbm/cmd/player"
+	"github.com/hashicorp/logutils"
+	"github.com/kyoh86/xdg"
 	"log"
 	"os"
+	"path"
 	"strconv"
 )
 
@@ -48,18 +51,57 @@ func handleListBookmarks(db *sql.DB) error {
 	return nil
 }
 
+func setupLogging() {
+	loglevel := os.Getenv("PBM_LOGLEVEL")
+	if loglevel == "" {
+		loglevel = "WARN"
+	}
+	filter := &logutils.LevelFilter{
+		Levels:   []logutils.LogLevel{"DEBUG", "WARN", "ERROR"},
+		MinLevel: logutils.LogLevel(loglevel),
+		Writer:   os.Stderr,
+	}
+	log.SetOutput(filter)
+}
+
+func setupDBPath() (string, error) {
+	pathDir := path.Join(xdg.CacheHome(), "playerbm")
+	err := os.MkdirAll(pathDir, 0775)
+	if err != nil {
+		return "", err
+	}
+	return path.Join(pathDir, "bookmarks.db"), nil
+}
+
 func main() {
-	cli, err := cli.ParseArgs(os.Args)
+	setupLogging()
+
+	args, err := cli.ParseArgs(os.Args)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	db, err := model.InitDb(cli.DBPath)
+	if args.HelpFlag {
+		fmt.Print(cli.HelpString)
+		os.Exit(0)
+	}
+
+	if args.VersionFlag {
+		fmt.Print(cli.VersionString)
+		os.Exit(0)
+	}
+
+	dbPath, err := setupDBPath()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if cli.ListBookmarksFlag {
+	db, err := model.InitDb(dbPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if args.ListBookmarksFlag {
 		err = handleListBookmarks(db)
 		if err != nil {
 			log.Fatal(err)
@@ -67,7 +109,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	p, err := player.InitPlayer(cli, db)
+	p, err := player.InitPlayer(args, db)
 	if err != nil {
 		log.Fatal(err)
 	}
