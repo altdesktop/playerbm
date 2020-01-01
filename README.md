@@ -1,10 +1,10 @@
-# playerbm
+# 📚 🎧 playerbm
 
-A bookmark utility for media players.
+Bookmark CLI for media players to resume where you left off in audiobooks and podcasts.
 
 ## About
 
-playerbm is a utility that saves your place when you exit the player or change the track and automatically resumes from where you left off when you open it again. This is useful if you listen to long audiobooks or lectures over many sessions.
+playerbm is a command-line utility that saves your place when you exit the player or change the track and automatically resumes from where you left off when you open it again. This is useful if you listen to long audiobooks or lectures over many sessions.
 
 Pass the command to open your media player to playerbm and it will connect to the player begin managing bookmarks.
 
@@ -27,6 +27,7 @@ playerbm should support any media player that implements the [MPRIS D-Bus Interf
 Known working players:
 
 * [mpv](https://github.com/mpv-player/mpv) with [mpv-mpris](https://github.com/hoyon/mpv-mpris) plugin.
+* [smplayer](https://www.smplayer.info/)
 
 ## License
 

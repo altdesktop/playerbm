@@ -138,7 +138,7 @@ func GetBookmark(db *sql.DB, xesamUrl string) (*Bookmark, error) {
 	if err != nil {
 		return nil, err
 	}
-	if url.Scheme == "file" {
+	if url.Scheme == "" || url.Scheme == "file" {
 		return getFileSchemeBookmark(db, url)
 	} else {
 		// TODO: Identified simply by the url
