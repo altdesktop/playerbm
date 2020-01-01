@@ -32,20 +32,26 @@ func TestBookmarkSave(t *testing.T) {
 	t.Log(bm)
 	require.NotNil(t, bm.Hash)
 	require.Equal(t, len(bm.Hash), 64, "The bookmark hash should be a valid sha256 hex digest")
-	require.True(t, bm.needsCreate, "The bookmark should not already exist")
+	require.False(t, bm.Exists(), "The bookmark should not already exist")
 	err = bm.Save(db)
 	require.NoError(t, err)
 	require.NotEqual(t, bm.Id, 0, "After save, the bookmark should have a database id")
 	require.True(t, bm.Exists(), "After save, the bookmark should be marked as exists")
+	require.Greater(t, bm.Created, int64(0), "The bookmark should have a create timestamp")
+	require.Greater(t, bm.Updated, int64(0), "The bookmark should have an updated timestamp")
 
-	// Update the position, save the bookmark, and make sure it propagates to
+	// Update the position and length, save the bookmark, and make sure it propagates to
 	// the database
 	require.Equal(t, bm.Position, int64(0))
 	bm.Position = int64(1000)
+	bm.Length = int64(1001)
+	bm.Finished = 1
 	bm.Save(db)
 	bm, err = GetBookmark(db, url)
 	require.NoError(t, err)
 	require.Equal(t, bm.Position, int64(1000))
+	require.Equal(t, bm.Length, int64(1001))
+	require.Equal(t, bm.Finished, 1)
 
 	// Make sure listing the bookmarks works
 	bookmarks, err := ListBookmarks(db)

@@ -100,6 +100,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer db.Close()
 
 	if args.ListBookmarksFlag {
 		err = handleListBookmarks(db)

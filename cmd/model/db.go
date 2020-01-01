@@ -39,7 +39,9 @@ func InitDb(path string) (*sql.DB, error) {
             hash TEXT,
             inode TEXT, -- uint64
             mtime INTEGER,
-            finished INTEGER -- boolean
+            finished INTEGER, -- boolean
+            created INTEGER,
+            updated INTEGER
         );
         PRAGMA user_version = 1;
         `
