@@ -12,6 +12,7 @@ type PbmCli struct {
 	ListBookmarksFlag bool
 	HelpFlag          bool
 	VersionFlag       bool
+	ResumeFlag        bool
 }
 
 const HelpString = `playerbm [OPTION…] PLAYER_COMMAND
@@ -33,6 +34,7 @@ Example:
 
 Options:
    --list-bookmarks, -l  list all bookmarks and exit
+   --resume, -r          resume playing from the last saved bookmark
    --help, -h            show help
    --version, -v         print the version` + "\n"
 
@@ -59,6 +61,9 @@ func ParseArgs(args []string) (*PbmCli, error) {
 			break
 		} else if arg == "-h" || arg == "--help" {
 			cli.HelpFlag = true
+			break
+		} else if arg == "-r" || arg == "--resume" {
+			cli.ResumeFlag = true
 			break
 		} else if arg == "-l" || arg == "--list-bookmarks" {
 			cli.ListBookmarksFlag = true

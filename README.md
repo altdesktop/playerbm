@@ -14,6 +14,18 @@ playerbm mpv ~/audiobooks/war-and-peace.mp3
 
 If you've opened the file with playerbm before, it should seek to the last known position. When you exit the player, it will save a bookmark and open the file to that location next time.
 
+To list all the bookmarks that playerbm is managing, use the `--list-bookmarks` flag.
+
+```
+playerbm --list-bookmarks
+```
+
+To resume playback from the last bookmark that was saved, use the `--resume` flag. This will open the last saved url with the default media player using `xdg-open` (usually provided by the package `xdg-utils`). For some help on setting a default media player, see [this Gist](https://gist.github.com/acrisci/b264c4b8e7f93a21c13065d9282dfa4a).
+
+```
+playerbm --resume
+```
+
 ## Installing
 
 ```

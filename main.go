@@ -10,6 +10,7 @@ import (
 	"github.com/kyoh86/xdg"
 	"log"
 	"os"
+	"os/exec"
 	"path"
 	"strconv"
 )
@@ -108,6 +109,20 @@ func main() {
 			log.Fatal(err)
 		}
 		os.Exit(0)
+	}
+
+	if args.ResumeFlag {
+		xdgOpen, err := exec.LookPath("xdg-open")
+		if err != nil {
+			fmt.Printf("Resuming requires xdg-open to be in the PATH (provided by xdg-utils)\n")
+			os.Exit(127)
+		}
+
+		recentUrl, err := model.GetMostRecentUrl(db)
+		if err != nil {
+			log.Fatal(err)
+		}
+		args.PlayerCmd = fmt.Sprintf("%s %s", xdgOpen, recentUrl)
 	}
 
 	p, err := player.InitPlayer(args, db)

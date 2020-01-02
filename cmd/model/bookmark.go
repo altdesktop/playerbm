@@ -62,13 +62,15 @@ func getFileSchemeBookmark(db *sql.DB, url *url.URL) (*Bookmark, error) {
 	stmt, err := db.Prepare(`
     select id, position, hash, length, finished, updated, created
     from bookmarks
-    where inode = ? and mtime = ?;
+    where inode = ? and mtime = ?
+    limit 1;
     `)
 	if err != nil {
 		return nil, err
 	}
 	row := stmt.QueryRow(bm.Inode, bm.Mtime)
-	err = row.Scan(&bm.Id, &bm.Position, &bm.Hash, &bm.Length, &bm.Finished, &bm.Updated, &bm.Created)
+	err = row.Scan(&bm.Id, &bm.Position, &bm.Hash, &bm.Length, &bm.Finished,
+		&bm.Updated, &bm.Created)
 	if err == nil {
 		log.Printf("[DEBUG] got bookmark from inode/mtime")
 		return &bm, nil
@@ -88,14 +90,16 @@ func getFileSchemeBookmark(db *sql.DB, url *url.URL) (*Bookmark, error) {
 
 		stmt, err = db.Prepare(`
         select id, position, length, finished, updated, created
-        from bookmarks where hash = ?;
+        from bookmarks where hash = ?
+        limit 1;
         `)
 		if err != nil {
 			return nil, err
 		}
 
 		row = stmt.QueryRow(hash)
-		err = row.Scan(&bm.Id, &bm.Position, &bm.Length, &bm.Finished, &bm.Updated, &bm.Created)
+		err = row.Scan(&bm.Id, &bm.Position, &bm.Length, &bm.Finished,
+			&bm.Updated, &bm.Created)
 		if err == sql.ErrNoRows {
 			log.Printf("[DEBUG] this is a new bookmark")
 			bm.needsCreate = true
@@ -112,7 +116,8 @@ func getFileSchemeBookmark(db *sql.DB, url *url.URL) (*Bookmark, error) {
 func ListBookmarks(db *sql.DB) ([]Bookmark, error) {
 	var bookmarks []Bookmark
 	rows, err := db.Query(`
-    select id, url, position, hash, inode, mtime, length, finished, updated, created
+    select id, url, position, hash, inode, mtime, length, finished, updated,
+        created
     from bookmarks
     order by updated desc
     `)
@@ -123,7 +128,8 @@ func ListBookmarks(db *sql.DB) ([]Bookmark, error) {
 
 	for rows.Next() {
 		bm := Bookmark{}
-		err = rows.Scan(&bm.Id, &bm.Url, &bm.Position, &bm.Hash, &bm.Inode, &bm.Mtime, &bm.Length, &bm.Finished, &bm.Updated, &bm.Created)
+		err = rows.Scan(&bm.Id, &bm.Url, &bm.Position, &bm.Hash, &bm.Inode,
+			&bm.Mtime, &bm.Length, &bm.Finished, &bm.Updated, &bm.Created)
 		if err != nil {
 			return nil, err
 		}
@@ -147,17 +153,39 @@ func GetBookmark(db *sql.DB, xesamUrl string) (*Bookmark, error) {
 	}
 }
 
+func GetMostRecentUrl(db *sql.DB) (string, error) {
+	stmt, err := db.Prepare(`
+    select url
+    from bookmarks
+    where finished == 0
+    order by updated desc
+    limit 1
+    `)
+	if err != nil {
+		return "", err
+	}
+	row := stmt.QueryRow()
+	var url string
+	err = row.Scan(&url)
+	if err != nil {
+		return "", err
+	}
+
+	return url, nil
+}
+
 func createBookmark(bm *Bookmark, db *sql.DB) error {
 	now := time.Now().Unix()
 	stmt, err := db.Prepare(`
-    insert into bookmarks
-    (url, position, hash, inode, mtime, length, finished, created, updated)
+    insert into bookmarks (url, position, hash, inode, mtime, length, finished,
+        created, updated)
     values(?, ?, ?, ?, ?, ?, ?, ?, ?);
     `)
 	if err != nil {
 		return err
 	}
-	result, err := stmt.Exec(bm.Url, bm.Position, bm.Hash, bm.Inode, bm.Mtime, bm.Length, bm.Finished, now, now)
+	result, err := stmt.Exec(bm.Url, bm.Position, bm.Hash, bm.Inode, bm.Mtime,
+		bm.Length, bm.Finished, now, now)
 	if err != nil {
 		return err
 	}
@@ -184,7 +212,8 @@ func updateBookmark(bm *Bookmark, db *sql.DB) error {
 		return err
 	}
 
-	_, err = stmt.Exec(bm.Url, bm.Position, bm.Hash, bm.Inode, bm.Mtime, bm.Length, bm.Finished, now, bm.Id)
+	_, err = stmt.Exec(bm.Url, bm.Position, bm.Hash, bm.Inode, bm.Mtime,
+		bm.Length, bm.Finished, now, bm.Id)
 	if err != nil {
 		return err
 	}

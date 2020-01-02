@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
+	"time"
 )
 
 func createTmpFile(t *testing.T) *os.File {
@@ -49,9 +50,15 @@ func TestBookmarkSave(t *testing.T) {
 	bm.Save(db)
 	bm, err = GetBookmark(db, url)
 	require.NoError(t, err)
-	require.Equal(t, bm.Position, int64(1000))
-	require.Equal(t, bm.Length, int64(1001))
-	require.Equal(t, bm.Finished, 1)
+	require.Equal(t, bm.Position, int64(1000),
+		"The position should be saved correctly for the bookmark")
+	require.Equal(t, bm.Length, int64(1001),
+		"The length should be saved correctly for the bookmark")
+	require.Equal(t, bm.Finished, 1,
+		"The finished flag should be saved correctly for the bookmark")
+	// Reset the finish flag for the next tests
+	bm.Finished = 0
+	require.NoError(t, bm.Save(db))
 
 	// Make sure listing the bookmarks works
 	bookmarks, err := ListBookmarks(db)
@@ -59,10 +66,30 @@ func TestBookmarkSave(t *testing.T) {
 	require.Equal(t, len(bookmarks), 1)
 	require.Equal(t, &bookmarks[0], bm)
 
+	// A more recent bookmark
+	time.Sleep(1 * time.Second)
+	f = createTmpFile(t)
+	defer f.Close()
+	url = "file://" + f.Name()
+	recentBm, err := GetBookmark(db, url)
+	err = recentBm.Save(db)
+	require.NoError(t, err)
+	recentUrl, err := GetMostRecentUrl(db)
+	require.NoError(t, err)
+	require.Equal(t, url, recentUrl,
+		"GetMostRecentUrl() should return the most recently saved bookmark url")
+	// If it's finished, it shouldn't show up
+	recentBm.Finished = 1
+	err = recentBm.Save(db)
+	require.NoError(t, err)
+	recentUrl, err = GetMostRecentUrl(db)
+	require.NoError(t, err)
+	require.Equal(t, bm.Url, recentUrl)
+
 	// Delete the bookmark
 	err = bm.Delete(db)
 	require.NoError(t, err)
 	bookmarks, err = ListBookmarks(db)
 	require.NoError(t, err)
-	require.Equal(t, len(bookmarks), 0)
+	require.Equal(t, len(bookmarks), 1)
 }
