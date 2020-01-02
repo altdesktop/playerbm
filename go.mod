@@ -8,5 +8,6 @@ require (
 	github.com/hashicorp/logutils v1.0.0
 	github.com/kyoh86/xdg v1.0.0
 	github.com/mattn/go-sqlite3 v2.0.2+incompatible
+	github.com/mitchellh/go-ps v0.0.0-20190716172923-621e5597135b
 	github.com/stretchr/testify v1.4.0
 )

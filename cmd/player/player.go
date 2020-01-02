@@ -7,6 +7,7 @@ import (
 	"github.com/altdesktop/playerbm/cmd/cli"
 	"github.com/altdesktop/playerbm/cmd/model"
 	"github.com/godbus/dbus/v5"
+	"github.com/mitchellh/go-ps"
 	"log"
 	"os"
 	"os/exec"
@@ -59,6 +60,24 @@ func abs(x int64) int64 {
 		return -x
 	}
 	return x
+}
+
+func isChildProcess(p int, child int) (bool, error) {
+	if p == child {
+		return true, nil
+	}
+	childProcess, err := ps.FindProcess(child)
+	if err != nil {
+		return false, err
+	}
+	if childProcess == nil {
+		return false, nil
+	}
+	if childProcess.PPid() == p {
+		return true, nil
+	} else {
+		return isChildProcess(p, childProcess.PPid())
+	}
 }
 
 func InitPlayer(cli *cli.PbmCli, db *sql.DB) (*Player, error) {
@@ -115,9 +134,18 @@ func InitPlayer(cli *cli.PbmCli, db *sql.DB) (*Player, error) {
 			err := busObj.Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
 			if err != nil {
 				log.Printf("[DEBUG] could not get process id: %v", err)
+				continue
 			}
 			log.Printf("[DEBUG] pid: %d", pid)
-			if player.Cmd.Process.Pid == pid {
+			processMatch, err := isChildProcess(player.Cmd.Process.Pid, pid)
+			if err != nil {
+				log.Printf("[DEBUG] could not get process info: %v", err)
+				continue
+			}
+			// TODO handle the case where no process is opened directly, but
+			// the file is opened through ipc to an existing process. Firefox
+			// does this.
+			if processMatch {
 				log.Printf("[DEBUG] managing player")
 				player.BusName = name
 				player.NameOwner = newOwner
