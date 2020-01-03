@@ -40,14 +40,18 @@ func handleListBookmarks(db *sql.DB) error {
 	urlFormat := "%-" + strconv.Itoa(maxUrlLen+2) + "v"
 
 	fmt.Fprintf(os.Stderr, urlFormat, "URL")
-	fmt.Fprintf(os.Stderr, "%-18v", "SHA256")
+	fmt.Fprintf(os.Stderr, "%-9v", "SHA256")
 	fmt.Fprintf(os.Stderr, "POSITION")
 	fmt.Fprintf(os.Stderr, "\n")
 
 	for _, b := range bookmarks {
 		fmt.Printf(urlFormat, b.Url.String())
-		fmt.Printf(b.Hash[:16] + "  ")
-		fmt.Printf(player.FormatPosition(b.Position))
+		fmt.Printf(b.Hash[:7] + "  ")
+		positionFormatted := player.FormatPosition(b.Position)
+		if b.Length > 0 {
+			positionFormatted = positionFormatted + "/" + player.FormatPosition(b.Length)
+		}
+		fmt.Printf(positionFormatted)
 		fmt.Printf("\n")
 	}
 
@@ -123,6 +127,10 @@ func main() {
 		recentUrl, err := model.GetMostRecentUrl(db)
 		if err != nil {
 			log.Fatal(err)
+		}
+		if recentUrl == nil {
+			fmt.Fprintf(os.Stderr, "No recent unfinished bookmarks found\n")
+			os.Exit(0)
 		}
 		unescaped, err := url.PathUnescape(recentUrl.Path)
 		if err != nil {

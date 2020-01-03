@@ -183,6 +183,9 @@ func GetMostRecentUrl(db *sql.DB) (*url.URL, error) {
 	var url string
 	err = row.Scan(&url)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 

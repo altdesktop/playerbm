@@ -283,7 +283,11 @@ func FormatPosition(ms int64) string {
 	minutes := (ms / 1000000 / 60) % 60
 	hours := (ms / 1000000 / 60 / 60)
 
-	return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
+	if hours > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
+	} else {
+		return fmt.Sprintf("%d:%02d", minutes, seconds)
+	}
 }
 
 func (player *Player) logPosition() {
