@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"github.com/kballard/go-shellquote"
 	"log"
 	"strings"
 )
@@ -77,7 +78,7 @@ func ParseArgs(args []string) (*PbmCli, error) {
 	}
 
 	if firstPlayerArg != -1 {
-		cli.PlayerCmd = strings.Join(args[firstPlayerArg:], " ")
+		cli.PlayerCmd = shellquote.Join(args[firstPlayerArg:]...)
 	}
 
 	return &cli, nil

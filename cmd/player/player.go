@@ -9,6 +9,7 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/mitchellh/go-ps"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,26 +18,11 @@ import (
 	"time"
 )
 
-type PlaybackStatus string
-
 const (
-	Playing PlaybackStatus = "Playing"
-	Paused  PlaybackStatus = "Paused"
-	Stopped PlaybackStatus = "Stopped"
+	Playing = "Playing"
+	Paused  = "Paused"
+	Stopped = "Stopped"
 )
-
-func parsePlaybackStatus(status string) (PlaybackStatus, bool) {
-	switch status {
-	case "Playing":
-		return Playing, true
-	case "Paused":
-		return Paused, true
-	case "Stopped":
-		return Stopped, true
-	default:
-		return "", false
-	}
-}
 
 type Player struct {
 	DB              *sql.DB
@@ -51,15 +37,8 @@ type Player struct {
 	PositionTime    time.Time
 	TrackId         dbus.ObjectPath
 	HasTrackId      bool
-	Status          PlaybackStatus
+	Status          string
 	Length          int64
-}
-
-func abs(x int64) int64 {
-	if x < 0 {
-		return -x
-	}
-	return x
 }
 
 func isChildProcess(p int, child int) (bool, error) {
@@ -110,6 +89,7 @@ func InitPlayer(cli *cli.PbmCli, db *sql.DB) (*Player, error) {
 	defer bus.RemoveSignal(c)
 
 	log.Printf("[DEBUG] %s", cli.PlayerCmd)
+	// TODO: if the process exits nonzero, break the main loop
 	player.Cmd = exec.Command("/bin/bash", "-c", cli.PlayerCmd)
 	player.Cmd.Stdout = os.Stdout
 	player.Cmd.Stderr = os.Stderr
@@ -133,13 +113,13 @@ func InitPlayer(cli *cli.PbmCli, db *sql.DB) (*Player, error) {
 			var pid int
 			err := busObj.Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
 			if err != nil {
-				log.Printf("[DEBUG] could not get process id: %v", err)
+				log.Printf("[DEBUG] could not get process id: %+v", err)
 				continue
 			}
 			log.Printf("[DEBUG] pid: %d", pid)
 			processMatch, err := isChildProcess(player.Cmd.Process.Pid, pid)
 			if err != nil {
-				log.Printf("[DEBUG] could not get process info: %v", err)
+				log.Printf("[DEBUG] could not get process info: %+v", err)
 				continue
 			}
 			// TODO handle the case where no process is opened directly, but
@@ -168,19 +148,25 @@ func (player *Player) getProperties() (map[string]dbus.Variant, error) {
 }
 
 func (player *Player) setProperties(properties map[string]dbus.Variant) {
+	var position int64
+	var hasPosition bool
+	var length int64
+	var hasLength bool
+	var url *url.URL
+	var status string
+	var hasStatus bool
+	var queueUpdate bool
+
 	// get the position
 	if variant, found := properties["Position"]; found {
-		if position, ok := variant.Value().(int64); ok {
-			log.Printf("[DEBUG] position has changed from '%s' to '%s'", FormatPosition(player.currentPosition()), FormatPosition(position))
-			player.setPosition(position)
+		if val, ok := variant.Value().(int64); ok {
+			position = val
+			hasPosition = true
 		}
 	}
 
 	if metadataVariant, found := properties["Metadata"]; found {
 		if metadata, ok := metadataVariant.Value().(map[string]dbus.Variant); ok {
-			var hasLength = false
-			var length int64
-
 			// get the length
 			if variant, ok := metadata["mpris:length"]; ok {
 				if val, ok := variant.Value().(int64); ok {
@@ -191,34 +177,21 @@ func (player *Player) setProperties(properties map[string]dbus.Variant) {
 
 			// get the trackid
 			if variant, found := metadata["mpris:trackid"]; found {
-				if trackid, ok := variant.Value().(dbus.ObjectPath); ok {
-					log.Printf("[DEBUG] trackid found: %s", trackid)
-					player.TrackId = trackid
+				if val, ok := variant.Value().(dbus.ObjectPath); ok {
+					player.TrackId = val
 				}
 			}
 
 			// get the url
 			if variant, found := metadata["xesam:url"]; found {
-				if url, ok := variant.Value().(string); ok {
-					if len(url) > 0 {
-						log.Printf("[DEBUG] url changed to '%s'", url)
-						err := player.updateBookmark()
-						if err != nil {
-							log.Printf("[DEBUG] could not update bookmark: %v", err)
-						}
-						if hasLength {
-							player.Length = length
-						}
-						err = player.loadBookmark(url)
-						if err != nil {
-							log.Printf("[DEBUG] could not restore bookmark: %v", err)
-						}
+				if val, ok := variant.Value().(string); ok {
+					normalizedUrl, err := model.ParseXesamUrl(val)
+					if err != nil {
+						log.Printf("[DEBUG] player gave invalid url: %s", val)
+					} else {
+						url = normalizedUrl
 					}
 				}
-			}
-
-			if hasLength {
-				player.Length = length
 			}
 		}
 	}
@@ -226,26 +199,75 @@ func (player *Player) setProperties(properties map[string]dbus.Variant) {
 	// get the playback status
 	if variant, found := properties["PlaybackStatus"]; found {
 		if val, ok := variant.Value().(string); ok {
-			if status, ok := parsePlaybackStatus(val); ok {
-				if status != player.Status {
-					log.Printf("[DEBUG] playback status has changed from '%s' to '%s'", player.Status, status)
-					switch status {
-					case Playing:
-						player.PositionTime = time.Now()
-					case Paused:
-						player.Position = player.currentPosition()
-					case Stopped:
-						// TODO: delete the bookmark, probably on a timer
-					default:
-						panic("should not be reached")
-					}
-					player.Status = status
-				}
-			}
+			hasStatus = true
+			status = val
 		}
 	}
 
+	currentUrl := player.currentUrl()
+	if url != nil && (currentUrl == nil || url.String() != currentUrl.String()) {
+		log.Printf("[DEBUG] url has changed from '%s' to '%s'", currentUrl, url)
+		err := player.updateBookmark()
+		if err != nil {
+			log.Printf("[DEBUG] could not update current bookmark: %+v", err)
+		}
+		err = player.loadBookmark(url)
+		if err != nil {
+			log.Printf("[DEBUG] could not load bookmark: %+v", err)
+		}
+		queueUpdate = true
+	}
+
+	if hasLength && player.CurrentBookmark != nil && player.CurrentBookmark.Length != length {
+		log.Printf("[DEBUG] setting player length to '%s'", FormatPosition(length))
+		player.CurrentBookmark.Length = length
+	}
+
+	if hasStatus && status != player.Status {
+		log.Printf("[DEBUG] playback status has changed from '%s' to '%s'", player.Status, status)
+		switch status {
+		case Playing:
+			player.PositionTime = time.Now()
+		case Paused:
+		case Stopped:
+			// TODO: no track currently playing if stopped
+			player.Position = player.currentPosition()
+		default:
+			log.Printf("[DEBUG] player gave invalid status: %s", status)
+		}
+		queueUpdate = true
+		player.Status = status
+	}
+
+	if hasPosition {
+		log.Printf("[DEBUG] position has changed from '%s' to '%s'", FormatPosition(player.currentPosition()), FormatPosition(position))
+		player.setPosition(position)
+	}
+
 	player.logPosition()
+	player.logCurrentBookmark()
+
+	if queueUpdate {
+		// Run this if anything important has changed. This works around spec
+		// weirdness regarding position.
+		go func() {
+			properties, err := player.getProperties()
+			if err != nil {
+				log.Printf("[DEBUG] could not get properties: %+v", err)
+				return
+			}
+
+			player.setProperties(properties)
+		}()
+	}
+}
+
+func (player *Player) currentUrl() *url.URL {
+	if player.CurrentBookmark == nil {
+		return nil
+	}
+
+	return player.CurrentBookmark.Url
 }
 
 func (player *Player) currentPosition() int64 {
@@ -304,7 +326,7 @@ func (player *Player) syncPosition(ms int64) error {
 }
 
 func (player *Player) handleSeeked(message *dbus.Signal) {
-	log.Printf("[DEBUG] handling seeked: %v", message)
+	log.Printf("[DEBUG] handling seeked: %+v", message)
 	if seeked, ok := message.Body[0].(int64); ok {
 		player.setPosition(seeked)
 	} else {
@@ -315,7 +337,7 @@ func (player *Player) handleSeeked(message *dbus.Signal) {
 }
 
 func (player *Player) handlePropertiesChanged(message *dbus.Signal) {
-	log.Printf("[DEBUG] handling properties changed: %v", message)
+	log.Printf("[DEBUG] handling properties changed: %+v", message)
 	name := fmt.Sprintf("%s", message.Body[0])
 
 	if name != "org.mpris.MediaPlayer2.Player" {
@@ -336,7 +358,7 @@ func (player *Player) handleNameOwnerChanged(message *dbus.Signal) bool {
 		return false
 	}
 
-	log.Printf("[DEBUG] handling name owner changed: %v", message)
+	log.Printf("[DEBUG] handling name owner changed: %+v", message)
 
 	if newOwner != player.NameOwner {
 		// XXX: the name could actually be transferred, but I've never seen
@@ -348,7 +370,7 @@ func (player *Player) handleNameOwnerChanged(message *dbus.Signal) bool {
 	return false
 }
 
-func (player *Player) loadBookmark(url string) error {
+func (player *Player) loadBookmark(url *url.URL) error {
 	player.logCurrentBookmark()
 
 	if player.CurrentBookmark != nil && player.CurrentBookmark.Url == url {
@@ -363,9 +385,10 @@ func (player *Player) loadBookmark(url string) error {
 
 	if bookmark.Exists() {
 		log.Printf("[DEBUG] bookmark exists, syncing to position %s", FormatPosition(bookmark.Position))
+		time.Sleep(100 * time.Millisecond)
 		err = player.syncPosition(bookmark.Position)
 		if err != nil {
-			return err
+			log.Printf("[DEBUG] could not sync position: %+v", err)
 		}
 	} else {
 		log.Printf("[DEBUG] bookmark does not exist, not restoring")
@@ -385,15 +408,6 @@ func (player *Player) updateBookmark() error {
 
 	position := player.currentPosition()
 	log.Printf("[DEBUG] saving bookmark to position: %s", FormatPosition(position))
-	threshold := int64(1e+7)
-	if position < threshold {
-		log.Printf("[DEBUG] at the beginning threshold, deleting bookmark")
-		return player.CurrentBookmark.Delete(player.DB)
-	} else if player.Length > 0 && abs(player.Length-position) < threshold {
-		log.Printf("[DEBUG] at the ending threshold, deleting bookmark")
-		return player.CurrentBookmark.Delete(player.DB)
-	}
-
 	player.CurrentBookmark.Position = position
 	player.logCurrentBookmark()
 	return player.CurrentBookmark.Save(player.DB)
@@ -407,7 +421,7 @@ func (player *Player) installSignalHandlers() {
 			s := <-signals
 			err := player.Cmd.Process.Signal(s)
 			if err != nil {
-				log.Printf("[WARNING] could not send signal to player process: %v", err)
+				log.Printf("[WARNING] could not send signal to player process: %+v", err)
 			}
 		}
 	}()
@@ -425,7 +439,7 @@ func (player *Player) Run() error {
 	defer func() {
 		err = player.updateBookmark()
 		if err != nil {
-			log.Printf("[DEBUG] could not update bookmark: %v", err)
+			log.Printf("[DEBUG] could not update bookmark: %+v", err)
 		}
 	}()
 

@@ -15,7 +15,7 @@ import (
 
 type Bookmark struct {
 	Id          int64
-	Url         string
+	Url         *url.URL
 	Hash        string
 	Position    int64
 	Length      int64
@@ -52,7 +52,7 @@ func getFileSchemeBookmark(db *sql.DB, url *url.URL) (*Bookmark, error) {
 	}
 
 	bm := Bookmark{
-		Url:   url.String(),
+		Url:   url,
 		Inode: fmt.Sprintf("%d", stat.Ino),
 		Mtime: stat.Mtim.Nano(),
 	}
@@ -128,32 +128,47 @@ func ListBookmarks(db *sql.DB) ([]Bookmark, error) {
 
 	for rows.Next() {
 		bm := Bookmark{}
-		err = rows.Scan(&bm.Id, &bm.Url, &bm.Position, &bm.Hash, &bm.Inode,
+		var url string
+		err = rows.Scan(&bm.Id, &url, &bm.Position, &bm.Hash, &bm.Inode,
 			&bm.Mtime, &bm.Length, &bm.Finished, &bm.Updated, &bm.Created)
 		if err != nil {
 			return nil, err
 		}
+		parsedUrl, err := ParseXesamUrl(url)
+		if err != nil {
+			panic(err)
+		}
+		bm.Url = parsedUrl
 		bookmarks = append(bookmarks, bm)
 	}
 
 	return bookmarks, nil
 }
 
-func GetBookmark(db *sql.DB, xesamUrl string) (*Bookmark, error) {
+func ParseXesamUrl(xesamUrl string) (*url.URL, error) {
 	url, err := url.Parse(xesamUrl)
 	if err != nil {
 		return nil, err
 	}
-	if url.Scheme == "" || url.Scheme == "file" {
+
+	if url.Scheme == "" {
+		url.Scheme = "file"
+	}
+
+	return url, nil
+}
+
+func GetBookmark(db *sql.DB, url *url.URL) (*Bookmark, error) {
+	if url.Scheme == "file" {
 		return getFileSchemeBookmark(db, url)
 	} else {
 		// TODO: Identified simply by the url
-		msg := fmt.Sprintf("Unsupported scheme: %s", url.Scheme)
+		msg := fmt.Sprintf("Unsupported scheme: '%s'", url.Scheme)
 		return nil, errors.New(msg)
 	}
 }
 
-func GetMostRecentUrl(db *sql.DB) (string, error) {
+func GetMostRecentUrl(db *sql.DB) (*url.URL, error) {
 	stmt, err := db.Prepare(`
     select url
     from bookmarks
@@ -162,16 +177,21 @@ func GetMostRecentUrl(db *sql.DB) (string, error) {
     limit 1
     `)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	row := stmt.QueryRow()
 	var url string
 	err = row.Scan(&url)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return url, nil
+	parsedUrl, err := ParseXesamUrl(url)
+	if err != nil {
+		panic(err)
+	}
+
+	return parsedUrl, nil
 }
 
 func createBookmark(bm *Bookmark, db *sql.DB) error {
@@ -184,7 +204,7 @@ func createBookmark(bm *Bookmark, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	result, err := stmt.Exec(bm.Url, bm.Position, bm.Hash, bm.Inode, bm.Mtime,
+	result, err := stmt.Exec(bm.Url.String(), bm.Position, bm.Hash, bm.Inode, bm.Mtime,
 		bm.Length, bm.Finished, now, now)
 	if err != nil {
 		return err
@@ -200,7 +220,21 @@ func createBookmark(bm *Bookmark, db *sql.DB) error {
 	return nil
 }
 
+func abs(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 func updateBookmark(bm *Bookmark, db *sql.DB) error {
+	threshold := int64(1e+7)
+	if bm.Length > 0 {
+		if abs(bm.Length-bm.Position) < threshold || bm.Position > bm.Length {
+			bm.Finished = 1
+		}
+	}
+
 	now := time.Now().Unix()
 	stmt, err := db.Prepare(`
     update bookmarks
@@ -212,7 +246,7 @@ func updateBookmark(bm *Bookmark, db *sql.DB) error {
 		return err
 	}
 
-	_, err = stmt.Exec(bm.Url, bm.Position, bm.Hash, bm.Inode, bm.Mtime,
+	_, err = stmt.Exec(bm.Url.String(), bm.Position, bm.Hash, bm.Inode, bm.Mtime,
 		bm.Length, bm.Finished, now, bm.Id)
 	if err != nil {
 		return err

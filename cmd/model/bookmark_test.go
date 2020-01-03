@@ -21,12 +21,11 @@ func TestBookmarkSave(t *testing.T) {
 	f := createTmpFile(t)
 	defer os.Remove(f.Name())
 
-	url := "file://" + f.Name()
-
 	db, err := InitDb(":memory:")
 	defer db.Close()
 	require.NoError(t, err)
 
+	url, err := ParseXesamUrl("file://" + f.Name())
 	bm, err := GetBookmark(db, url)
 	require.NoError(t, err)
 	require.NotNil(t, bm)
@@ -45,14 +44,15 @@ func TestBookmarkSave(t *testing.T) {
 	// the database
 	require.Equal(t, bm.Position, int64(0))
 	bm.Position = int64(1000)
-	bm.Length = int64(1001)
+	bm.Length = int64(1e+10)
 	bm.Finished = 1
 	bm.Save(db)
+	url, err = ParseXesamUrl("file://" + f.Name())
 	bm, err = GetBookmark(db, url)
 	require.NoError(t, err)
 	require.Equal(t, bm.Position, int64(1000),
 		"The position should be saved correctly for the bookmark")
-	require.Equal(t, bm.Length, int64(1001),
+	require.Equal(t, bm.Length, int64(1e+10),
 		"The length should be saved correctly for the bookmark")
 	require.Equal(t, bm.Finished, 1,
 		"The finished flag should be saved correctly for the bookmark")
@@ -70,8 +70,10 @@ func TestBookmarkSave(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	f = createTmpFile(t)
 	defer f.Close()
-	url = "file://" + f.Name()
+	url, err = ParseXesamUrl("file://" + f.Name())
+	require.NoError(t, err)
 	recentBm, err := GetBookmark(db, url)
+	require.NoError(t, err)
 	err = recentBm.Save(db)
 	require.NoError(t, err)
 	recentUrl, err := GetMostRecentUrl(db)

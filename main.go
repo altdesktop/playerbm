@@ -7,8 +7,10 @@ import (
 	"github.com/altdesktop/playerbm/cmd/model"
 	"github.com/altdesktop/playerbm/cmd/player"
 	"github.com/hashicorp/logutils"
+	"github.com/kballard/go-shellquote"
 	"github.com/kyoh86/xdg"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -29,7 +31,7 @@ func handleListBookmarks(db *sql.DB) error {
 	// get the longest url
 	maxUrlLen := 0
 	for _, b := range bookmarks {
-		l := len(b.Url)
+		l := len(b.Url.String())
 		if l > maxUrlLen {
 			maxUrlLen = l
 		}
@@ -43,7 +45,7 @@ func handleListBookmarks(db *sql.DB) error {
 	fmt.Fprintf(os.Stderr, "\n")
 
 	for _, b := range bookmarks {
-		fmt.Printf(urlFormat, b.Url)
+		fmt.Printf(urlFormat, b.Url.String())
 		fmt.Printf(b.Hash[:16] + "  ")
 		fmt.Printf(player.FormatPosition(b.Position))
 		fmt.Printf("\n")
@@ -122,7 +124,12 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		args.PlayerCmd = fmt.Sprintf("%s %s", xdgOpen, recentUrl)
+		unescaped, err := url.PathUnescape(recentUrl.Path)
+		if err != nil {
+			log.Fatal(err)
+		}
+		unescapedQuoted := shellquote.Join(unescaped)
+		args.PlayerCmd = fmt.Sprintf("%s %s", xdgOpen, unescapedQuoted)
 	}
 
 	p, err := player.InitPlayer(args, db)
