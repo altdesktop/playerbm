@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/kballard/go-shellquote"
 	"io"
 	"log"
-	"net/url"
+	urllib "net/url"
 	"os"
 	"syscall"
 	"time"
@@ -15,7 +16,7 @@ import (
 
 type Bookmark struct {
 	Id          int64
-	Url         *url.URL
+	Url         *urllib.URL
 	Hash        string
 	Position    int64
 	Length      int64
@@ -40,7 +41,7 @@ func sha256sum(file *os.File) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-func getFileSchemeBookmark(db *sql.DB, url *url.URL) (*Bookmark, error) {
+func getFileSchemeBookmark(db *sql.DB, url *urllib.URL) (*Bookmark, error) {
 	log.Printf("[DEBUG] getting bookmark from file scheme path")
 	// Identified by the hash with filesystem heuristics to avoid reading the
 	// whole file when not necessary
@@ -145,8 +146,8 @@ func ListBookmarks(db *sql.DB) ([]Bookmark, error) {
 	return bookmarks, nil
 }
 
-func ParseXesamUrl(xesamUrl string) (*url.URL, error) {
-	url, err := url.Parse(xesamUrl)
+func ParseXesamUrl(xesamUrl string) (*urllib.URL, error) {
+	url, err := urllib.Parse(xesamUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +159,15 @@ func ParseXesamUrl(xesamUrl string) (*url.URL, error) {
 	return url, nil
 }
 
-func GetBookmark(db *sql.DB, url *url.URL) (*Bookmark, error) {
+func UrlShellQuoted(url *urllib.URL) (string, error) {
+	unescaped, err := urllib.PathUnescape(url.Path)
+	if err != nil {
+		return "", nil
+	}
+	return shellquote.Join(unescaped), nil
+}
+
+func GetBookmark(db *sql.DB, url *urllib.URL) (*Bookmark, error) {
 	if url.Scheme == "file" {
 		return getFileSchemeBookmark(db, url)
 	} else {
@@ -168,7 +177,7 @@ func GetBookmark(db *sql.DB, url *url.URL) (*Bookmark, error) {
 	}
 }
 
-func GetMostRecentUrl(db *sql.DB) (*url.URL, error) {
+func GetMostRecentUrl(db *sql.DB) (*urllib.URL, error) {
 	stmt, err := db.Prepare(`
     select url
     from bookmarks

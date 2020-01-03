@@ -7,14 +7,13 @@ import (
 	"github.com/altdesktop/playerbm/cmd/model"
 	"github.com/altdesktop/playerbm/cmd/player"
 	"github.com/hashicorp/logutils"
-	"github.com/kballard/go-shellquote"
 	"github.com/kyoh86/xdg"
 	"log"
-	"net/url"
 	"os"
 	"os/exec"
 	"path"
 	"strconv"
+	"strings"
 )
 
 func handleListBookmarks(db *sql.DB) error {
@@ -28,13 +27,29 @@ func handleListBookmarks(db *sql.DB) error {
 		return nil
 	}
 
+	urls := []string{}
+
+	home := os.Getenv("HOME")
+
 	// get the longest url
 	maxUrlLen := 0
 	for _, b := range bookmarks {
-		l := len(b.Url.String())
+		// TODO update me for http scheme
+		quoted, err := model.UrlShellQuoted(b.Url)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// this is nice for me
+		if home != "" && strings.HasPrefix(quoted, home) {
+			quoted = strings.Replace(quoted, home, "~", 1)
+		}
+
+		l := len(quoted)
 		if l > maxUrlLen {
 			maxUrlLen = l
 		}
+		urls = append(urls, quoted)
 	}
 
 	urlFormat := "%-" + strconv.Itoa(maxUrlLen+2) + "v"
@@ -44,8 +59,8 @@ func handleListBookmarks(db *sql.DB) error {
 	fmt.Fprintf(os.Stderr, "POSITION")
 	fmt.Fprintf(os.Stderr, "\n")
 
-	for _, b := range bookmarks {
-		fmt.Printf(urlFormat, b.Url.String())
+	for i, b := range bookmarks {
+		fmt.Printf(urlFormat, urls[i])
 		fmt.Printf(b.Hash[:7] + "  ")
 		positionFormatted := player.FormatPosition(b.Position)
 		if b.Length > 0 {
@@ -132,12 +147,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "No recent unfinished bookmarks found\n")
 			os.Exit(0)
 		}
-		unescaped, err := url.PathUnescape(recentUrl.Path)
+		quoted, err := model.UrlShellQuoted(recentUrl)
 		if err != nil {
 			log.Fatal(err)
 		}
-		unescapedQuoted := shellquote.Join(unescaped)
-		args.PlayerCmd = fmt.Sprintf("%s %s", xdgOpen, unescapedQuoted)
+		args.PlayerCmd = fmt.Sprintf("%s %s", xdgOpen, quoted)
 	}
 
 	p, err := player.InitPlayer(args, db)
