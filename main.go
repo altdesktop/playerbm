@@ -154,18 +154,28 @@ func main() {
 		args.PlayerCmd = fmt.Sprintf("%s %s", xdgOpen, quoted)
 	}
 
-	p, err := player.InitPlayer(args, db)
+	p := player.New(args, db)
+
+	if args.ListPlayersFlag {
+		names, err := p.ListPlayers()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		for _, name := range names {
+			fmt.Printf("%s\n", name)
+		}
+
+		os.Exit(0)
+	}
+
+	err = p.Run()
 	if err != nil {
 		if err, ok := err.(*player.PlayerCmdError); ok {
 			fmt.Printf("playerbm: %s\n", err.Error())
 			os.Exit(err.ExitCode)
 		}
 
-		log.Fatal(err)
-	}
-
-	err = p.Run()
-	if err != nil {
 		log.Fatal(err)
 	}
 }

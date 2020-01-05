@@ -69,101 +69,50 @@ func isChildProcess(p int, child int) (bool, error) {
 	}
 }
 
-func InitPlayer(cli *cli.PbmCli, db *sql.DB) (*Player, error) {
-	player := Player{
+func (player *Player) initDbus() error {
+	if player.Bus != nil {
+		return nil
+	}
+
+	bus, err := dbus.SessionBus()
+	if err != nil {
+		return err
+	}
+
+	player.Bus = bus
+	return nil
+}
+
+func New(cli *cli.PbmCli, db *sql.DB) *Player {
+	return &Player{
 		Cli:           cli,
 		DB:            db,
 		Status:        Stopped,
 		ProcessFinish: make(chan error),
 	}
+}
 
-	bus, err := dbus.SessionBus()
+func (player *Player) ListPlayers() ([]string, error) {
+	prefix := "org.mpris.MediaPlayer2."
+	players := []string{}
+	err := player.initDbus()
+
 	if err != nil {
-		return nil, err
+		return players, err
 	}
-	player.Bus = bus
-
-	busObj := bus.BusObject()
-
-	err = bus.AddMatchSignal(
-		dbus.WithMatchSender("org.freedesktop.DBus"),
-		dbus.WithMatchInterface("org.freedesktop.DBus"),
-		dbus.WithMatchObjectPath("/org/freedesktop/DBus"),
-		dbus.WithMatchMember("NameOwnerChanged"),
-	)
+	names := []string{}
+	err = player.Bus.BusObject().Call("org.freedesktop.DBus.ListNames", 0).Store(&names)
 	if err != nil {
-		return nil, err
+		return players, err
 	}
 
-	c := make(chan *dbus.Signal, 10)
-	bus.Signal(c)
-	defer bus.RemoveSignal(c)
-
-	log.Printf("[DEBUG] %s", cli.PlayerCmd)
-	// TODO: if the process exits nonzero, break the main loop
-	player.Cmd = exec.Command("/bin/bash", "-c", cli.PlayerCmd)
-	player.Cmd.Stdout = os.Stdout
-	player.Cmd.Stderr = os.Stderr
-
-	go func() {
-		err = player.Cmd.Run()
-		c <- nil
-		player.ProcessFinish <- err
-	}()
-
-	for message := range c {
-		if message == nil {
-			break
-		}
-		name := fmt.Sprintf("%s", message.Body[0])
-		// oldOwner := fmt.Sprintf("%s", message.Body[1])
-		newOwner := fmt.Sprintf("%s", message.Body[2])
-
-		if !strings.HasPrefix(name, "org.mpris.MediaPlayer2.") {
-			continue
-		}
-
-		if len(newOwner) > 0 {
-			log.Printf("[DEBUG] a player appeared: name: %s, owner: %s", name, newOwner)
-			var pid int
-			err := busObj.Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
-			if err != nil {
-				log.Printf("[DEBUG] could not get process id: %+v", err)
-				continue
-			}
-			log.Printf("[DEBUG] pid: %d", pid)
-			processMatch, err := isChildProcess(player.Cmd.Process.Pid, pid)
-			if err != nil {
-				log.Printf("[DEBUG] could not get process info: %+v", err)
-				continue
-			}
-			// TODO handle the case where no process is opened directly, but
-			// the file is opened through ipc to an existing process. Firefox
-			// does this.
-			if processMatch {
-				log.Printf("[DEBUG] managing player")
-				player.BusName = name
-				player.NameOwner = newOwner
-				player.MprisObj = bus.Object(name, "/org/mpris/MediaPlayer2")
-				break
-			}
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			players = append(players, name[len(prefix):])
 		}
 	}
 
-	if player.MprisObj == nil {
-		if player.Cmd.ProcessState.Exited() {
-			exitCode := player.Cmd.ProcessState.ExitCode()
-			err = &PlayerCmdError{
-				err:      fmt.Sprintf("player process exited unexpectedly (exit %d)", exitCode),
-				ExitCode: exitCode,
-			}
-			return nil, err
-		} else {
-			panic("should not be reached (TODO: implement the dbus timeout)")
-		}
-	}
-
-	return &player, nil
+	return players, nil
 }
 
 func (player *Player) getProperties() (map[string]dbus.Variant, error) {
@@ -459,7 +408,100 @@ func (player *Player) installSignalHandlers() {
 	}()
 }
 
+func (player *Player) init() error {
+	err := player.initDbus()
+	if err != nil {
+		return err
+	}
+
+	busObj := player.Bus.BusObject()
+
+	err = player.Bus.AddMatchSignal(
+		dbus.WithMatchSender("org.freedesktop.DBus"),
+		dbus.WithMatchInterface("org.freedesktop.DBus"),
+		dbus.WithMatchObjectPath("/org/freedesktop/DBus"),
+		dbus.WithMatchMember("NameOwnerChanged"),
+	)
+	if err != nil {
+		return err
+	}
+
+	c := make(chan *dbus.Signal, 10)
+	player.Bus.Signal(c)
+	defer player.Bus.RemoveSignal(c)
+
+	log.Printf("[DEBUG] %s", player.Cli.PlayerCmd)
+	// TODO: if the process exits nonzero, break the main loop
+	player.Cmd = exec.Command("/bin/bash", "-c", player.Cli.PlayerCmd)
+	player.Cmd.Stdout = os.Stdout
+	player.Cmd.Stderr = os.Stderr
+
+	go func() {
+		err = player.Cmd.Run()
+		c <- nil
+		player.ProcessFinish <- err
+	}()
+
+	for message := range c {
+		if message == nil {
+			break
+		}
+		name := fmt.Sprintf("%s", message.Body[0])
+		// oldOwner := fmt.Sprintf("%s", message.Body[1])
+		newOwner := fmt.Sprintf("%s", message.Body[2])
+
+		if !strings.HasPrefix(name, "org.mpris.MediaPlayer2.") {
+			continue
+		}
+
+		if len(newOwner) > 0 {
+			log.Printf("[DEBUG] a player appeared: name: %s, owner: %s", name, newOwner)
+			var pid int
+			err := busObj.Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
+			if err != nil {
+				log.Printf("[DEBUG] could not get process id: %+v", err)
+				continue
+			}
+			log.Printf("[DEBUG] pid: %d", pid)
+			processMatch, err := isChildProcess(player.Cmd.Process.Pid, pid)
+			if err != nil {
+				log.Printf("[DEBUG] could not get process info: %+v", err)
+				continue
+			}
+			// TODO handle the case where no process is opened directly, but
+			// the file is opened through ipc to an existing process. Firefox
+			// does this.
+			if processMatch {
+				log.Printf("[DEBUG] managing player")
+				player.BusName = name
+				player.NameOwner = newOwner
+				player.MprisObj = player.Bus.Object(name, "/org/mpris/MediaPlayer2")
+				break
+			}
+		}
+	}
+
+	if player.MprisObj == nil {
+		if player.Cmd.ProcessState.Exited() {
+			exitCode := player.Cmd.ProcessState.ExitCode()
+			err = &PlayerCmdError{
+				err:      fmt.Sprintf("player process exited unexpectedly (exit %d)", exitCode),
+				ExitCode: exitCode,
+			}
+			return err
+		} else {
+			panic("should not be reached (TODO: implement the dbus timeout)")
+		}
+	}
+
+	return nil
+}
+
 func (player *Player) Run() error {
+	err := player.init()
+	if err != nil {
+		return err
+	}
 	properties, err := player.getProperties()
 	if err != nil {
 		return err

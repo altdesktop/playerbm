@@ -11,6 +11,7 @@ import (
 type PbmCli struct {
 	PlayerCmd         string
 	ListBookmarksFlag bool
+	ListPlayersFlag   bool
 	HelpFlag          bool
 	VersionFlag       bool
 	ResumeFlag        bool
@@ -35,6 +36,7 @@ Example:
 
 Options:
    --list-bookmarks, -l  list all bookmarks and exit
+   --list-players, -L    list all running players that can be controlled
    --resume, -r          resume playing from the last saved bookmark
    --help, -h            show help
    --version, -v         print the version` + "\n"
@@ -68,6 +70,9 @@ func ParseArgs(args []string) (*PbmCli, error) {
 			break
 		} else if arg == "-l" || arg == "--list-bookmarks" {
 			cli.ListBookmarksFlag = true
+			break
+		} else if arg == "-L" || arg == "--list-players" {
+			cli.ListPlayersFlag = true
 			break
 		} else if strings.HasPrefix(arg, "-") {
 			return nil, errors.New(fmt.Sprintf("Unknown argument: %s", arg))
