@@ -156,6 +156,11 @@ func main() {
 
 	p, err := player.InitPlayer(args, db)
 	if err != nil {
+		if err, ok := err.(*player.PlayerCmdError); ok {
+			fmt.Printf("playerbm: %s\n", err.Error())
+			os.Exit(err.ExitCode)
+		}
+
 		log.Fatal(err)
 	}
 

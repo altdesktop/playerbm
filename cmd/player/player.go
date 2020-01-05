@@ -39,6 +39,16 @@ type Player struct {
 	HasTrackId      bool
 	Status          string
 	Length          int64
+	ProcessFinish   chan error
+}
+
+type PlayerCmdError struct {
+	err      string
+	ExitCode int
+}
+
+func (e *PlayerCmdError) Error() string {
+	return e.err
 }
 
 func isChildProcess(p int, child int) (bool, error) {
@@ -61,9 +71,10 @@ func isChildProcess(p int, child int) (bool, error) {
 
 func InitPlayer(cli *cli.PbmCli, db *sql.DB) (*Player, error) {
 	player := Player{
-		Cli:    cli,
-		DB:     db,
-		Status: Stopped,
+		Cli:           cli,
+		DB:            db,
+		Status:        Stopped,
+		ProcessFinish: make(chan error),
 	}
 
 	bus, err := dbus.SessionBus()
@@ -94,12 +105,16 @@ func InitPlayer(cli *cli.PbmCli, db *sql.DB) (*Player, error) {
 	player.Cmd.Stdout = os.Stdout
 	player.Cmd.Stderr = os.Stderr
 
-	err = player.Cmd.Start()
-	if err != nil {
-		return nil, err
-	}
+	go func() {
+		err = player.Cmd.Run()
+		c <- nil
+		player.ProcessFinish <- err
+	}()
 
 	for message := range c {
+		if message == nil {
+			break
+		}
 		name := fmt.Sprintf("%s", message.Body[0])
 		// oldOwner := fmt.Sprintf("%s", message.Body[1])
 		newOwner := fmt.Sprintf("%s", message.Body[2])
@@ -132,6 +147,19 @@ func InitPlayer(cli *cli.PbmCli, db *sql.DB) (*Player, error) {
 				player.MprisObj = bus.Object(name, "/org/mpris/MediaPlayer2")
 				break
 			}
+		}
+	}
+
+	if player.MprisObj == nil {
+		if player.Cmd.ProcessState.Exited() {
+			exitCode := player.Cmd.ProcessState.ExitCode()
+			err = &PlayerCmdError{
+				err:      fmt.Sprintf("player process exited unexpectedly (exit %d)", exitCode),
+				ExitCode: exitCode,
+			}
+			return nil, err
+		} else {
+			panic("should not be reached (TODO: implement the dbus timeout)")
 		}
 	}
 
@@ -478,5 +506,5 @@ func (player *Player) Run() error {
 		}
 	}
 
-	return player.Cmd.Wait()
+	return <-player.ProcessFinish
 }
