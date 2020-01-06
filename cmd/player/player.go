@@ -1,13 +1,10 @@
 package player
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/altdesktop/playerbm/cmd/cli"
 	"github.com/altdesktop/playerbm/cmd/model"
 	"github.com/godbus/dbus/v5"
-	"github.com/mitchellh/go-ps"
 	"log"
 	"net/url"
 	"os"
@@ -18,144 +15,31 @@ import (
 	"time"
 )
 
-const (
-	Playing = "Playing"
-	Paused  = "Paused"
-	Stopped = "Stopped"
-)
-
-type Player struct {
-	DB              *sql.DB
-	Bus             *dbus.Conn
-	Cli             *cli.PbmCli
-	Cmd             *exec.Cmd
-	CurrentBookmark *model.Bookmark
-	BusName         string
-	NameOwner       string
-	MprisObj        dbus.BusObject
-	Position        int64
-	PositionTime    time.Time
-	TrackId         dbus.ObjectPath
-	HasTrackId      bool
-	Status          string
-	Length          int64
-	ProcessFinish   chan error
-}
-
-type PlayerCmdError struct {
-	err      string
-	ExitCode int
-}
-
-func (e *PlayerCmdError) Error() string {
-	return e.err
-}
-
-func isChildProcess(p int, child int) (bool, error) {
-	if p == child {
-		return true, nil
-	}
-	childProcess, err := ps.FindProcess(child)
-	if err != nil {
-		return false, err
-	}
-	if childProcess == nil {
-		return false, nil
-	}
-	if childProcess.PPid() == p {
-		return true, nil
-	} else {
-		return isChildProcess(p, childProcess.PPid())
-	}
-}
-
-func (player *Player) initDbus() error {
-	if player.Bus != nil {
-		return nil
-	}
-
-	bus, err := dbus.SessionBus()
-	if err != nil {
-		return err
-	}
-
-	player.Bus = bus
-	return nil
-}
-
-func New(cli *cli.PbmCli, db *sql.DB) *Player {
-	return &Player{
-		Cli:           cli,
-		DB:            db,
-		Status:        Stopped,
-		ProcessFinish: make(chan error),
-	}
-}
-
-func (player *Player) ListPlayers() ([]string, error) {
-	prefix := "org.mpris.MediaPlayer2."
-	players := []string{}
-	err := player.initDbus()
-
-	if err != nil {
-		return players, err
-	}
-	names := []string{}
-	err = player.Bus.BusObject().Call("org.freedesktop.DBus.ListNames", 0).Store(&names)
-	if err != nil {
-		return players, err
-	}
-
-	for _, name := range names {
-		if strings.HasPrefix(name, prefix) {
-			players = append(players, name[len(prefix):])
-		}
-	}
-
-	return players, nil
-}
-
-func (player *Player) getProperties() (map[string]dbus.Variant, error) {
-	var properties map[string]dbus.Variant
-	err := player.MprisObj.Call("org.freedesktop.DBus.Properties.GetAll", 0, "org.mpris.MediaPlayer2.Player").Store(&properties)
-	if err != nil {
-		return nil, err
-	}
-	return properties, nil
-}
-
-func (player *Player) setProperties(properties map[string]dbus.Variant) {
-	var position int64
-	var hasPosition bool
-	var length int64
-	var hasLength bool
-	var url *url.URL
-	var status string
-	var hasStatus bool
-	var queueUpdate bool
+func parseProperties(propertiesVariant map[string]dbus.Variant) *Properties {
+	properties := Properties{}
 
 	// get the position
-	if variant, found := properties["Position"]; found {
+	if variant, found := propertiesVariant["Position"]; found {
 		if val, ok := variant.Value().(int64); ok {
-			position = val
-			hasPosition = true
+			properties.Position = val
+			properties.HasPosition = true
 		}
 	}
 
-	if metadataVariant, found := properties["Metadata"]; found {
+	if metadataVariant, found := propertiesVariant["Metadata"]; found {
 		if metadata, ok := metadataVariant.Value().(map[string]dbus.Variant); ok {
 			// get the length
 			if variant, ok := metadata["mpris:length"]; ok {
 				if val, ok := variant.Value().(int64); ok {
-					hasLength = true
-					length = val
+					properties.HasLength = true
+					properties.Length = val
 				}
 			}
 
 			// get the trackid
 			if variant, found := metadata["mpris:trackid"]; found {
 				if val, ok := variant.Value().(dbus.ObjectPath); ok {
-					player.TrackId = val
+					properties.TrackId = val
 				}
 			}
 
@@ -166,7 +50,7 @@ func (player *Player) setProperties(properties map[string]dbus.Variant) {
 					if err != nil {
 						log.Printf("[DEBUG] player gave invalid url: %s", val)
 					} else {
-						url = normalizedUrl
+						properties.Url = normalizedUrl
 					}
 				}
 			}
@@ -174,35 +58,50 @@ func (player *Player) setProperties(properties map[string]dbus.Variant) {
 	}
 
 	// get the playback status
-	if variant, found := properties["PlaybackStatus"]; found {
+	if variant, found := propertiesVariant["PlaybackStatus"]; found {
 		if val, ok := variant.Value().(string); ok {
-			hasStatus = true
-			status = val
+			properties.Status = val
 		}
 	}
 
+	return &properties
+}
+
+func (player *Player) getProperties() (*Properties, error) {
+	var propertiesVariant map[string]dbus.Variant
+	err := player.MprisObj.Call("org.freedesktop.DBus.Properties.GetAll", 0, "org.mpris.MediaPlayer2.Player").Store(&propertiesVariant)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseProperties(propertiesVariant), nil
+}
+
+func (player *Player) syncBookmark(properties *Properties) {
+	var queueUpdate bool
+
 	currentUrl := player.currentUrl()
-	if url != nil && (currentUrl == nil || url.String() != currentUrl.String()) {
-		log.Printf("[DEBUG] url has changed from '%s' to '%s'", currentUrl, url)
+	if properties.Url != nil && (currentUrl == nil || properties.Url.String() != currentUrl.String()) {
+		log.Printf("[DEBUG] url has changed from '%s' to '%s'", currentUrl, properties.Url)
 		err := player.updateBookmark()
 		if err != nil {
 			log.Printf("[DEBUG] could not update current bookmark: %+v", err)
 		}
-		err = player.loadBookmark(url)
+		err = player.loadBookmark(properties.Url)
 		if err != nil {
 			log.Printf("[DEBUG] could not load bookmark: %+v", err)
 		}
 		queueUpdate = true
 	}
 
-	if hasLength && player.CurrentBookmark != nil && player.CurrentBookmark.Length != length {
-		log.Printf("[DEBUG] setting player length to '%s'", FormatPosition(length))
-		player.CurrentBookmark.Length = length
+	if properties.HasLength && player.CurrentBookmark != nil && player.CurrentBookmark.Length != properties.Length {
+		log.Printf("[DEBUG] setting player length to '%s'", FormatPosition(properties.Length))
+		player.CurrentBookmark.Length = properties.Length
 	}
 
-	if hasStatus && status != player.Status {
-		log.Printf("[DEBUG] playback status has changed from '%s' to '%s'", player.Status, status)
-		switch status {
+	if len(properties.Status) > 0 && properties.Status != player.Status {
+		log.Printf("[DEBUG] playback status has changed from '%s' to '%s'", player.Status, properties.Status)
+		switch properties.Status {
 		case Playing:
 			player.PositionTime = time.Now()
 		case Paused:
@@ -210,15 +109,15 @@ func (player *Player) setProperties(properties map[string]dbus.Variant) {
 			// TODO: no track currently playing if stopped
 			player.Position = player.currentPosition()
 		default:
-			log.Printf("[DEBUG] player gave invalid status: %s", status)
+			log.Printf("[DEBUG] player gave invalid status: %s", properties.Status)
 		}
 		queueUpdate = true
-		player.Status = status
+		player.Status = properties.Status
 	}
 
-	if hasPosition {
-		log.Printf("[DEBUG] position has changed from '%s' to '%s'", FormatPosition(player.currentPosition()), FormatPosition(position))
-		player.setPosition(position)
+	if properties.HasPosition {
+		log.Printf("[DEBUG] position has changed from '%s' to '%s'", FormatPosition(player.currentPosition()), FormatPosition(properties.Position))
+		player.setPosition(properties.Position)
 	}
 
 	player.logPosition()
@@ -234,7 +133,7 @@ func (player *Player) setProperties(properties map[string]dbus.Variant) {
 				return
 			}
 
-			player.setProperties(properties)
+			player.syncBookmark(properties)
 		}()
 	}
 }
@@ -252,18 +151,6 @@ func (player *Player) currentPosition() int64 {
 		return player.Position + time.Since(player.PositionTime).Microseconds()
 	} else {
 		return player.Position
-	}
-}
-
-func FormatPosition(ms int64) string {
-	seconds := (ms / 1000000) % 60
-	minutes := (ms / 1000000 / 60) % 60
-	hours := (ms / 1000000 / 60 / 60)
-
-	if hours > 0 {
-		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
-	} else {
-		return fmt.Sprintf("%d:%02d", minutes, seconds)
 	}
 }
 
@@ -326,7 +213,7 @@ func (player *Player) handlePropertiesChanged(message *dbus.Signal) {
 	}
 
 	if properties, ok := message.Body[1].(map[string]dbus.Variant); ok {
-		player.setProperties(properties)
+		player.syncBookmark(parseProperties(properties))
 	}
 }
 
@@ -409,14 +296,9 @@ func (player *Player) installSignalHandlers() {
 }
 
 func (player *Player) init() error {
-	err := player.initDbus()
-	if err != nil {
-		return err
-	}
-
 	busObj := player.Bus.BusObject()
 
-	err = player.Bus.AddMatchSignal(
+	err := player.Bus.AddMatchSignal(
 		dbus.WithMatchSender("org.freedesktop.DBus"),
 		dbus.WithMatchInterface("org.freedesktop.DBus"),
 		dbus.WithMatchObjectPath("/org/freedesktop/DBus"),
@@ -507,7 +389,7 @@ func (player *Player) Run() error {
 		return err
 	}
 
-	player.setProperties(properties)
+	player.syncBookmark(properties)
 	player.installSignalHandlers()
 
 	defer func() {

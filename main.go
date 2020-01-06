@@ -6,6 +6,7 @@ import (
 	"github.com/altdesktop/playerbm/cmd/cli"
 	"github.com/altdesktop/playerbm/cmd/model"
 	"github.com/altdesktop/playerbm/cmd/player"
+	"github.com/godbus/dbus/v5"
 	"github.com/hashicorp/logutils"
 	"github.com/kyoh86/xdg"
 	"log"
@@ -154,10 +155,13 @@ func main() {
 		args.PlayerCmd = fmt.Sprintf("%s %s", xdgOpen, quoted)
 	}
 
-	p := player.New(args, db)
+	bus, err := dbus.SessionBus()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if args.ListPlayersFlag {
-		names, err := p.ListPlayers()
+		names, err := player.ListPlayers(bus)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -169,6 +173,7 @@ func main() {
 		os.Exit(0)
 	}
 
+	p := player.New(args, db, bus)
 	err = p.Run()
 	if err != nil {
 		if err, ok := err.(*player.PlayerCmdError); ok {
