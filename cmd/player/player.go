@@ -15,6 +15,9 @@ import (
 	"time"
 )
 
+const mprisPrefix = "org.mpris.MediaPlayer2."
+const mprisPath = "/org/mpris/MediaPlayer2"
+
 func parseProperties(propertiesVariant map[string]dbus.Variant) *Properties {
 	properties := Properties{}
 
@@ -80,6 +83,10 @@ func (player *Player) getProperties() (*Properties, error) {
 func (player *Player) syncBookmark(properties *Properties) {
 	var queueUpdate bool
 
+	if len(properties.TrackId) > 0 {
+		player.TrackId = properties.TrackId
+	}
+
 	currentUrl := player.currentUrl()
 	if properties.Url != nil && (currentUrl == nil || properties.Url.String() != currentUrl.String()) {
 		log.Printf("[DEBUG] url has changed from '%s' to '%s'", currentUrl, properties.Url)
@@ -94,9 +101,9 @@ func (player *Player) syncBookmark(properties *Properties) {
 		queueUpdate = true
 	}
 
-	if properties.HasLength && player.CurrentBookmark != nil && player.CurrentBookmark.Length != properties.Length {
+	if properties.HasLength && player.Bookmark != nil && player.Bookmark.Length != properties.Length {
 		log.Printf("[DEBUG] setting player length to '%s'", FormatPosition(properties.Length))
-		player.CurrentBookmark.Length = properties.Length
+		player.Bookmark.Length = properties.Length
 	}
 
 	if len(properties.Status) > 0 && properties.Status != player.Status {
@@ -139,11 +146,11 @@ func (player *Player) syncBookmark(properties *Properties) {
 }
 
 func (player *Player) currentUrl() *url.URL {
-	if player.CurrentBookmark == nil {
+	if player.Bookmark == nil {
 		return nil
 	}
 
-	return player.CurrentBookmark.Url
+	return player.Bookmark.Url
 }
 
 func (player *Player) currentPosition() int64 {
@@ -159,10 +166,10 @@ func (player *Player) logPosition() {
 }
 
 func (player *Player) logCurrentBookmark() {
-	if player.CurrentBookmark == nil {
+	if player.Bookmark == nil {
 		log.Printf("[DEBUG] no current bookmark")
 	} else {
-		log.Printf("[DEBUG] bookmark: url=%s, position=%s", player.CurrentBookmark.Url, FormatPosition(player.CurrentBookmark.Position))
+		log.Printf("[DEBUG] bookmark: url=%s, position=%s", player.Bookmark.Url, FormatPosition(player.Bookmark.Position))
 	}
 }
 
@@ -241,7 +248,7 @@ func (player *Player) handleNameOwnerChanged(message *dbus.Signal) bool {
 func (player *Player) loadBookmark(url *url.URL) error {
 	player.logCurrentBookmark()
 
-	if player.CurrentBookmark != nil && player.CurrentBookmark.Url == url {
+	if player.Bookmark != nil && player.Bookmark.Url == url {
 		log.Printf("[DEBUG] url unchanged, not loading bookmark")
 		return nil
 	}
@@ -262,23 +269,23 @@ func (player *Player) loadBookmark(url *url.URL) error {
 		log.Printf("[DEBUG] bookmark does not exist, not restoring")
 	}
 
-	player.CurrentBookmark = bookmark
+	player.Bookmark = bookmark
 	player.logCurrentBookmark()
 
 	return nil
 }
 
 func (player *Player) updateBookmark() error {
-	if player.CurrentBookmark == nil {
+	if player.Bookmark == nil {
 		log.Printf("[DEBUG] no current bookmark to update")
 		return nil
 	}
 
 	position := player.currentPosition()
 	log.Printf("[DEBUG] saving bookmark to position: %s", FormatPosition(position))
-	player.CurrentBookmark.Position = position
+	player.Bookmark.Position = position
 	player.logCurrentBookmark()
-	return player.CurrentBookmark.Save(player.DB)
+	return player.Bookmark.Save(player.DB)
 }
 
 func (player *Player) installSignalHandlers() {
@@ -332,7 +339,7 @@ func (player *Player) init() error {
 		// oldOwner := fmt.Sprintf("%s", message.Body[1])
 		newOwner := fmt.Sprintf("%s", message.Body[2])
 
-		if !strings.HasPrefix(name, "org.mpris.MediaPlayer2.") {
+		if !strings.HasPrefix(name, mprisPrefix) {
 			continue
 		}
 
@@ -357,7 +364,7 @@ func (player *Player) init() error {
 				log.Printf("[DEBUG] managing player")
 				player.BusName = name
 				player.NameOwner = newOwner
-				player.MprisObj = player.Bus.Object(name, "/org/mpris/MediaPlayer2")
+				player.MprisObj = player.Bus.Object(name, mprisPath)
 				break
 			}
 		}
@@ -406,14 +413,14 @@ func (player *Player) Run() error {
 
 	err = player.Bus.AddMatchSignal(
 		dbus.WithMatchSender(player.NameOwner),
-		dbus.WithMatchObjectPath("/org/mpris/MediaPlayer2"),
+		dbus.WithMatchObjectPath(mprisPath),
 	)
 	if err != nil {
 		return err
 	}
 
 	for message := range c {
-		if message.Sender == player.NameOwner && message.Path == "/org/mpris/MediaPlayer2" {
+		if message.Sender == player.NameOwner && message.Path == mprisPath {
 			if message.Name == "org.mpris.MediaPlayer2.Player.Seeked" {
 				player.handleSeeked(message)
 			} else if message.Name == "org.freedesktop.DBus.Properties.PropertiesChanged" {
@@ -431,4 +438,51 @@ func (player *Player) Run() error {
 	}
 
 	return <-player.ProcessFinish
+}
+
+func (player *Player) HasBookmark() bool {
+	return player.Bookmark != nil
+}
+
+func (player *Player) SaveBookmark() error {
+	if player.Bookmark != nil {
+		return player.Bookmark.Save(player.DB)
+	}
+
+	return errors.New("player does not have a bookmark to save")
+}
+
+func (player *Player) SetName(name string) {
+	if !strings.HasPrefix(name, mprisPrefix) {
+		name = fmt.Sprintf("%s%s", mprisPrefix, name)
+	}
+
+	log.Printf("[DEBUG] loading player named: %s", name)
+
+	player.BusName = name
+	player.MprisObj = player.Bus.Object(name, mprisPath)
+}
+
+func (player *Player) EnsureBookmark() error {
+	properties, err := player.getProperties()
+	if err != nil {
+		return err
+	}
+
+	player.setPosition(properties.Position)
+	player.Length = properties.Length
+	player.Status = properties.Status
+	player.TrackId = properties.TrackId
+
+	if properties.Url != nil {
+		bookmark, err := model.GetBookmark(player.DB, properties.Url)
+		if err != nil {
+			return err
+		}
+		player.Bookmark = bookmark
+	} else {
+		return errors.New("player does not have a valid url")
+	}
+
+	return nil
 }

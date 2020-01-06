@@ -28,6 +28,14 @@ type Bookmark struct {
 	needsCreate bool
 }
 
+type FileError struct {
+	err string
+}
+
+func (e *FileError) Error() string {
+	return e.err
+}
+
 func (bm *Bookmark) Exists() bool {
 	return !bm.needsCreate
 }
@@ -49,7 +57,10 @@ func getFileSchemeBookmark(db *sql.DB, url *urllib.URL) (*Bookmark, error) {
 	err := syscall.Stat(url.Path, &stat)
 	if err != nil {
 		// TODO: relax the requirement that the file must exist
-		return nil, err
+		return nil, &FileError{err: "File does not exist"}
+	}
+	if stat.Mode&syscall.S_IFREG == 0 {
+		return nil, &FileError{err: "Not a regular file"}
 	}
 
 	bm := Bookmark{

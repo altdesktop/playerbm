@@ -173,6 +173,38 @@ func main() {
 		os.Exit(0)
 	}
 
+	if args.SaveFlag {
+		names, err := player.ListPlayers(bus)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if len(names) == 0 {
+			fmt.Printf("no players were found\n")
+			os.Exit(1)
+		}
+
+		for _, name := range names {
+			p := player.New(args, db, bus)
+			p.SetName(name)
+			err = p.EnsureBookmark()
+			if err != nil {
+				fmt.Printf("could not save bookmark for player %s: %s\n", name, err.Error())
+				continue
+			}
+
+			p.Bookmark.Position = p.Position
+			err = p.SaveBookmark()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			fmt.Printf("saved bookmark for player %s to position %s\n", name, player.FormatPosition(p.Bookmark.Position))
+		}
+
+		os.Exit(0)
+	}
+
 	p := player.New(args, db, bus)
 	err = p.Run()
 	if err != nil {
