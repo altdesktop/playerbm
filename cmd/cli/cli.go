@@ -57,10 +57,11 @@ type BoolFlag struct {
 }
 
 type StringFlag struct {
-	Short        string
-	Long         string
-	PresentValue *bool
-	ArgValue     *string
+	Short           string
+	Long            string
+	Present         *bool
+	ArgValuePresent bool
+	ArgValue        *string
 }
 
 func parseBoolFlag(arg string, flag BoolFlag) (bool, error) {
@@ -69,16 +70,26 @@ func parseBoolFlag(arg string, flag BoolFlag) (bool, error) {
 		return true, nil
 	}
 
-	return false, nil
-}
-
-func parseStringFlag(arg string, flag StringFlag) (bool, error) {
-	if arg == flag.Short || arg == flag.Long {
-		*flag.PresentValue = true
-		return true, nil
+	if strings.HasPrefix(arg, flag.Short+"=") || strings.HasPrefix(arg, flag.Long+"=") {
+		return false, errors.New(fmt.Sprintf("no argument expected for %s, %s flag", flag.Short, flag.Long))
 	}
 
 	return false, nil
+}
+
+func parseStringFlag(arg string, flag StringFlag) (bool, bool, error) {
+	if arg == flag.Short || arg == flag.Long {
+		*flag.Present = true
+		return true, false, nil
+	}
+
+	if strings.HasPrefix(arg, flag.Short+"=") || strings.HasPrefix(arg, flag.Long+"=") {
+		*flag.Present = true
+		*flag.ArgValue = strings.Split(arg, "=")[1]
+		return true, true, nil
+	}
+
+	return false, false, nil
 }
 
 func ParseArgs(args []string) (*PbmCli, error) {
@@ -99,8 +110,8 @@ func ParseArgs(args []string) (*PbmCli, error) {
 	}
 
 	stringFlags := []StringFlag{
-		StringFlag{Short: "-s", Long: "--save", PresentValue: &cli.SaveFlag, ArgValue: &cli.SavePlayers},
-		StringFlag{Short: "-r", Long: "--resume", PresentValue: &cli.ResumeFlag, ArgValue: &cli.ResumeFile},
+		StringFlag{Short: "-s", Long: "--save", Present: &cli.SaveFlag, ArgValue: &cli.SavePlayers},
+		StringFlag{Short: "-r", Long: "--resume", Present: &cli.ResumeFlag, ArgValue: &cli.ResumeFile},
 	}
 
 	firstPlayerArg := -1
@@ -128,12 +139,13 @@ func ParseArgs(args []string) (*PbmCli, error) {
 
 			if !match {
 				for _, flag := range stringFlags {
-					match, err = parseStringFlag(arg, flag)
+					var argValuePresent bool
+					match, argValuePresent, err = parseStringFlag(arg, flag)
+					if err != nil {
+						return nil, err
+					}
 					if match {
-						if err != nil {
-							return nil, err
-						}
-						if len(*flag.ArgValue) == 0 {
+						if !argValuePresent {
 							// look ahead
 							if len(args) < i+2 || strings.HasPrefix(args[i+1], "-") {
 								break
@@ -158,6 +170,10 @@ func ParseArgs(args []string) (*PbmCli, error) {
 	if firstPlayerArg != -1 {
 		cli.PlayerCmd = shellquote.Join(args[firstPlayerArg:]...)
 	}
+
+	// TODO: argument validation
+
+	log.Printf("[DEBUG] args: %+v", cli)
 
 	return &cli, nil
 }
