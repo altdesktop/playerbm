@@ -72,7 +72,7 @@ func parseProperties(propertiesVariant map[string]dbus.Variant) *Properties {
 
 func (player *Player) getProperties() (*Properties, error) {
 	var propertiesVariant map[string]dbus.Variant
-	err := player.MprisObj.Call("org.freedesktop.DBus.Properties.GetAll", 0, "org.mpris.MediaPlayer2.Player").Store(&propertiesVariant)
+	err := player.MprisObj.Call("org.freedesktop.DBus.Properties.GetAll", dbus.FlagNoAutoStart, "org.mpris.MediaPlayer2.Player").Store(&propertiesVariant)
 	if err != nil {
 		return nil, err
 	}
@@ -188,11 +188,11 @@ func (player *Player) syncPosition(ms int64) error {
 	}
 
 	log.Printf("[DEBUG] Syncing player position to %s", FormatPosition(ms))
-	err := player.MprisObj.Call("org.mpris.MediaPlayer2.Player.Play", 0).Store()
+	err := player.MprisObj.Call("org.mpris.MediaPlayer2.Player.Play", dbus.FlagNoAutoStart).Store()
 	if err != nil {
 		return err
 	}
-	err = player.MprisObj.Call("org.mpris.MediaPlayer2.Player.SetPosition", 0, player.TrackId, ms).Store()
+	err = player.MprisObj.Call("org.mpris.MediaPlayer2.Player.SetPosition", dbus.FlagNoAutoStart, player.TrackId, ms).Store()
 	if err != nil {
 		return err
 	}
@@ -346,7 +346,7 @@ func (player *Player) init() error {
 		if len(newOwner) > 0 {
 			log.Printf("[DEBUG] a player appeared: name: %s, owner: %s", name, newOwner)
 			var pid int
-			err := busObj.Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
+			err := busObj.Call("org.freedesktop.DBus.GetConnectionUnixProcessID", dbus.FlagNoAutoStart, name).Store(&pid)
 			if err != nil {
 				log.Printf("[DEBUG] could not get process id: %+v", err)
 				continue

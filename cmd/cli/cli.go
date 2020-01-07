@@ -15,7 +15,9 @@ type PbmCli struct {
 	HelpFlag          bool
 	VersionFlag       bool
 	ResumeFlag        bool
+	ResumeFile        string
 	SaveFlag          bool
+	SavePlayers       string
 }
 
 const HelpString = `playerbm [OPTION…] PLAYER_COMMAND
@@ -36,15 +38,48 @@ Example:
     playerbm, it will seek to your last position.
 
 Options:
-   --list-bookmarks, -l  list all bookmarks and exit
-   --list-players, -L    list all running players that can be controlled
-   --resume, -r          launch a player and resume playing from the last saved
-                         bookmark
-   --save, -s            Save bookmarks for the running players
-   --help, -h            show help
-   --version, -v         print the version` + "\n"
+   -l, --list-bookmarks  List all bookmarks and exit.
+   -L, --list-players    List all running players that can be controlled.
+   -r, --resume=[FILE]   Launch a player and resume playing FILE from the last
+                         saved bookmark and begin managing bookmarks. (default:
+                         file of the last saved bookmark)
+   -s, --save=[PLAYER]   Save bookmarks for the running players in a comma
+                         separated list. (default: all running players)
+   -h, --help            Show help.
+   -v, --version         Print the version.` + "\n"
 
 const VersionString = "v0.0.1\n"
+
+type BoolFlag struct {
+	Short string
+	Long  string
+	Value *bool
+}
+
+type StringFlag struct {
+	Short        string
+	Long         string
+	PresentValue *bool
+	ArgValue     *string
+}
+
+func parseBoolFlag(arg string, flag BoolFlag) (bool, error) {
+	if arg == flag.Short || arg == flag.Long {
+		*flag.Value = true
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func parseStringFlag(arg string, flag StringFlag) (bool, error) {
+	if arg == flag.Short || arg == flag.Long {
+		*flag.PresentValue = true
+		return true, nil
+	}
+
+	return false, nil
+}
 
 func ParseArgs(args []string) (*PbmCli, error) {
 	log.Printf("[DEBUG] parsing arguments: %v", args)
@@ -56,26 +91,64 @@ func ParseArgs(args []string) (*PbmCli, error) {
 		return &cli, nil
 	}
 
+	boolFlags := []BoolFlag{
+		BoolFlag{Short: "-v", Long: "--version", Value: &cli.VersionFlag},
+		BoolFlag{Short: "-h", Long: "--help", Value: &cli.HelpFlag},
+		BoolFlag{Short: "-l", Long: "--list-bookmarks", Value: &cli.ListBookmarksFlag},
+		BoolFlag{Short: "-L", Long: "--list-players", Value: &cli.ListPlayersFlag},
+	}
+
+	stringFlags := []StringFlag{
+		StringFlag{Short: "-s", Long: "--save", PresentValue: &cli.SaveFlag, ArgValue: &cli.SavePlayers},
+		StringFlag{Short: "-r", Long: "--resume", PresentValue: &cli.ResumeFlag, ArgValue: &cli.ResumeFile},
+	}
+
 	firstPlayerArg := -1
+	skipNext := true
 	for i, arg := range args {
-		if i == 0 {
+		if skipNext {
+			skipNext = false
 			continue
 		}
 
-		if arg == "-v" || arg == "--version" {
-			cli.VersionFlag = true
-		} else if arg == "-h" || arg == "--help" {
-			cli.HelpFlag = true
-		} else if arg == "-r" || arg == "--resume" {
-			cli.ResumeFlag = true
-		} else if arg == "-l" || arg == "--list-bookmarks" {
-			cli.ListBookmarksFlag = true
-		} else if arg == "-L" || arg == "--list-players" {
-			cli.ListPlayersFlag = true
-		} else if arg == "-s" || arg == "--save" {
-			cli.SaveFlag = true
-		} else if strings.HasPrefix(arg, "-") {
-			return nil, errors.New(fmt.Sprintf("Unknown argument: %s", arg))
+		if strings.HasPrefix(arg, "-") {
+			var match bool
+			var err error
+
+			for _, flag := range boolFlags {
+				match, err = parseBoolFlag(arg, flag)
+				if err != nil {
+					return nil, err
+				}
+
+				if match {
+					break
+				}
+			}
+
+			if !match {
+				for _, flag := range stringFlags {
+					match, err = parseStringFlag(arg, flag)
+					if match {
+						if err != nil {
+							return nil, err
+						}
+						if len(*flag.ArgValue) == 0 {
+							// look ahead
+							if len(args) < i+2 || strings.HasPrefix(args[i+1], "-") {
+								break
+							}
+							*flag.ArgValue = args[i+1]
+							skipNext = true
+						}
+						break
+					}
+				}
+			}
+
+			if !match {
+				return nil, errors.New(fmt.Sprintf("Unknown argument: %s", arg))
+			}
 		} else {
 			firstPlayerArg = i
 			break

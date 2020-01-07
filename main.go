@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/logutils"
 	"github.com/kyoh86/xdg"
 	"log"
+	urllib "net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -134,21 +135,33 @@ func main() {
 	}
 
 	if args.ResumeFlag {
+		var err error
+		var url *urllib.URL
+
 		xdgOpen, err := exec.LookPath("xdg-open")
 		if err != nil {
 			fmt.Printf("Resuming requires xdg-open to be in the PATH (provided by xdg-utils)\n")
 			os.Exit(127)
 		}
 
-		recentUrl, err := model.GetMostRecentUrl(db)
-		if err != nil {
-			log.Fatal(err)
+		if len(args.ResumeFile) > 0 {
+			url, err = model.ParseXesamUrl(args.ResumeFile)
+			if err != nil {
+				fmt.Printf("got invalid url for --resume flag: %s\n", args.ResumeFile)
+				os.Exit(1)
+			}
+		} else {
+			url, err = model.GetMostRecentUrl(db)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if url == nil {
+				fmt.Fprintf(os.Stderr, "No recent unfinished bookmarks found\n")
+				os.Exit(0)
+			}
 		}
-		if recentUrl == nil {
-			fmt.Fprintf(os.Stderr, "No recent unfinished bookmarks found\n")
-			os.Exit(0)
-		}
-		quoted, err := model.UrlShellQuoted(recentUrl)
+
+		quoted, err := model.UrlShellQuoted(url)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -174,9 +187,19 @@ func main() {
 	}
 
 	if args.SaveFlag {
-		names, err := player.ListPlayers(bus)
-		if err != nil {
-			log.Fatal(err)
+		var err error
+		var names []string
+
+		if len(args.SavePlayers) > 0 {
+			names = strings.Split(args.SavePlayers, ",")
+			for i, name := range names {
+				names[i] = strings.Trim(name, " ")
+			}
+		} else {
+			names, err = player.ListPlayers(bus)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 
 		if len(names) == 0 {
