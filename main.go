@@ -64,7 +64,11 @@ func handleListBookmarks(db *sql.DB) error {
 
 	for i, b := range bookmarks {
 		fmt.Printf(urlFormat, urls[i])
-		fmt.Printf(b.Hash[:7] + "  ")
+		if len(b.Hash) >= 7 {
+			fmt.Printf(b.Hash[:7] + "  ")
+		} else {
+			fmt.Printf("%s", "         ")
+		}
 		positionFormatted := player.FormatPosition(b.Position)
 		if b.Length > 0 {
 			positionFormatted = positionFormatted + "/" + player.FormatPosition(b.Length)

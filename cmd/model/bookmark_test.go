@@ -22,8 +22,8 @@ func TestBookmarkSave(t *testing.T) {
 	defer os.Remove(f.Name())
 
 	db, err := InitDb(":memory:")
-	defer db.Close()
 	require.NoError(t, err)
+	defer db.Close()
 
 	url, err := ParseXesamUrl("file://" + f.Name())
 	bm, err := GetBookmark(db, url)
@@ -96,4 +96,23 @@ func TestBookmarkSave(t *testing.T) {
 	bookmarks, err = ListBookmarks(db)
 	require.NoError(t, err)
 	require.Equal(t, len(bookmarks), 1)
+}
+
+func TestOtherSchemeBookmarks(t *testing.T) {
+	db, err := InitDb(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	url, err := ParseXesamUrl("http://example.com/movie.mp4")
+	require.NoError(t, err)
+
+	bookmark, err := GetBookmark(db, url)
+	require.NoError(t, err)
+	err = bookmark.Save(db)
+	require.NoError(t, err)
+	require.Equal(t, bookmark.Url.String(), url.String())
+	require.NotEqual(t, bookmark.Id, int64(0))
+
+	bookmark2, err := GetBookmark(db, url)
+	require.Equal(t, bookmark, bookmark2)
 }

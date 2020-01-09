@@ -482,7 +482,9 @@ func (player *Player) EnsureBookmark() error {
 	}
 
 	player.setPosition(properties.Position)
-	player.Length = properties.Length
+	if properties.HasLength {
+		player.Length = properties.Length
+	}
 	player.Status = properties.Status
 	player.TrackId = properties.TrackId
 
@@ -490,6 +492,9 @@ func (player *Player) EnsureBookmark() error {
 		bookmark, err := model.GetBookmark(player.DB, properties.Url)
 		if err != nil {
 			return err
+		}
+		if properties.HasLength {
+			bookmark.Length = properties.Length
 		}
 		player.Bookmark = bookmark
 	} else {
