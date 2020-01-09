@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -134,30 +135,66 @@ func main() {
 		os.Exit(0)
 	}
 
+	bus, err := dbus.SessionBus()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	if args.ResumeFlag {
 		var err error
 		var url *urllib.URL
 
 		xdgOpen, err := exec.LookPath("xdg-open")
 		if err != nil {
-			fmt.Printf("Resuming requires xdg-open to be in the PATH (provided by xdg-utils)\n")
+			fmt.Printf("playerbm: resuming requires xdg-open to be in the PATH (provided by xdg-utils)\n")
 			os.Exit(127)
 		}
 
 		if len(args.ResumeFile) > 0 {
 			url, err = model.ParseXesamUrl(args.ResumeFile)
 			if err != nil {
-				fmt.Printf("got invalid url for --resume flag: %s\n", args.ResumeFile)
+				fmt.Printf("playerbm: got invalid url for --resume flag: %s\n", args.ResumeFile)
 				os.Exit(1)
 			}
 		} else {
-			url, err = model.GetMostRecentUrl(db)
+			bookmark, err := model.GetMostRecentBookmark(db)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if url == nil {
+			if bookmark == nil {
 				fmt.Fprintf(os.Stderr, "No recent unfinished bookmarks found\n")
 				os.Exit(0)
+			}
+			url = bookmark.Url
+		}
+
+		names, err := player.ListPlayers(bus)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		for _, name := range names {
+			p := player.New(args, db, bus)
+			p.SetName(name)
+			properties, err := p.GetPropertiesRemote()
+			if err != nil {
+				log.Printf("[WARNING] could not get properties for player: %s", name)
+				continue
+			}
+			p.SetPlayerProperties(properties)
+			if properties.Url != nil && (properties.Url.String() == url.String()) {
+				log.Printf("[DEBUG] found a running player")
+				err = p.LoadBookmark(url)
+				if err != nil {
+					log.Printf("[WARNING] could not load bookmark for player: %s", name)
+					continue
+				}
+				err = p.Manage()
+				if err != nil {
+					fmt.Printf("playerbm: could not manage player: %s\n", err.Error())
+					os.Exit(1)
+				}
+				os.Exit(p.ExitCode)
 			}
 		}
 
@@ -168,12 +205,12 @@ func main() {
 		args.PlayerCmd = fmt.Sprintf("%s %s", xdgOpen, quoted)
 	}
 
-	bus, err := dbus.SessionBus()
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	if args.ListPlayersFlag {
+		bus, err := dbus.SessionBus()
+		if err != nil {
+			log.Fatal(err)
+		}
+
 		names, err := player.ListPlayers(bus)
 		if err != nil {
 			log.Fatal(err)
@@ -203,8 +240,17 @@ func main() {
 		}
 
 		if len(names) == 0 {
-			fmt.Printf("no players were found\n")
+			fmt.Printf("playerbm: no players were found\n")
 			os.Exit(1)
+		}
+
+		IsNameValid := regexp.MustCompile(`^[0-9a-zA-Z._-]+$`).MatchString
+
+		for _, name := range names {
+			if !IsNameValid(name) {
+				fmt.Printf("playerbm: got invalid player name: %s\n", name)
+				os.Exit(1)
+			}
 		}
 
 		for _, name := range names {
@@ -212,7 +258,7 @@ func main() {
 			p.SetName(name)
 			err = p.EnsureBookmark()
 			if err != nil {
-				fmt.Printf("could not save bookmark for player %s: %s\n", name, err.Error())
+				fmt.Printf("playerbm: could not save bookmark for player %s: %s\n", name, err.Error())
 				continue
 			}
 
@@ -222,14 +268,14 @@ func main() {
 				log.Fatal(err)
 			}
 
-			fmt.Printf("saved bookmark for player %s to position %s\n", name, player.FormatPosition(p.Bookmark.Position))
+			fmt.Printf("playerbm: saved bookmark for player %s to position %s\n", name, player.FormatPosition(p.Bookmark.Position))
 		}
 
 		os.Exit(0)
 	}
 
 	p := player.New(args, db, bus)
-	err = p.Run()
+	err = p.RunCmd()
 	if err != nil {
 		if err, ok := err.(*player.PlayerCmdError); ok {
 			fmt.Printf("playerbm: %s\n", err.Error())
@@ -238,4 +284,6 @@ func main() {
 
 		log.Fatal(err)
 	}
+
+	os.Exit(p.ExitCode)
 }

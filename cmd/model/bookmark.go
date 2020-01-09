@@ -188,9 +188,10 @@ func GetBookmark(db *sql.DB, url *urllib.URL) (*Bookmark, error) {
 	}
 }
 
-func GetMostRecentUrl(db *sql.DB) (*urllib.URL, error) {
+func GetMostRecentBookmark(db *sql.DB) (*Bookmark, error) {
 	stmt, err := db.Prepare(`
-    select url
+    select id, url, position, hash, inode, mtime, length, finished, updated,
+        created
     from bookmarks
     where finished == 0
     order by updated desc
@@ -199,9 +200,12 @@ func GetMostRecentUrl(db *sql.DB) (*urllib.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := stmt.QueryRow()
 	var url string
-	err = row.Scan(&url)
+	bookmark := Bookmark{}
+	row := stmt.QueryRow()
+	err = row.Scan(&bookmark.Id, &url, &bookmark.Position, &bookmark.Hash,
+		&bookmark.Inode, &bookmark.Mtime, &bookmark.Length, &bookmark.Finished,
+		&bookmark.Updated, &bookmark.Created)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -213,8 +217,9 @@ func GetMostRecentUrl(db *sql.DB) (*urllib.URL, error) {
 	if err != nil {
 		panic(err)
 	}
+	bookmark.Url = parsedUrl
 
-	return parsedUrl, nil
+	return &bookmark, nil
 }
 
 func createBookmark(bm *Bookmark, db *sql.DB) error {

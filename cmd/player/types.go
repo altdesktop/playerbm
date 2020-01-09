@@ -31,6 +31,8 @@ type Player struct {
 	Status        string
 	Length        int64
 	ProcessFinish chan error
+	Signals       chan *dbus.Signal
+	ExitCode      int
 }
 
 func New(cli *cli.PbmCli, db *sql.DB, bus *dbus.Conn) *Player {
@@ -40,6 +42,8 @@ func New(cli *cli.PbmCli, db *sql.DB, bus *dbus.Conn) *Player {
 		Bus:           bus,
 		Status:        Stopped,
 		ProcessFinish: make(chan error),
+		Signals:       make(chan *dbus.Signal, 10),
+		PositionTime:  time.Now(),
 	}
 }
 

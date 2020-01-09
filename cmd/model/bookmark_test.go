@@ -76,19 +76,19 @@ func TestBookmarkSave(t *testing.T) {
 	require.NoError(t, err)
 	err = recentBm.Save(db)
 	require.NoError(t, err)
-	recentUrl, err := GetMostRecentUrl(db)
+	recentBm2, err := GetMostRecentBookmark(db)
 	require.NoError(t, err)
-	require.NotNil(t, recentUrl)
-	require.Equal(t, url, recentUrl,
-		"GetMostRecentUrl() should return the most recently saved bookmark url")
+	require.NotNil(t, recentBm2)
+	require.Equal(t, url, recentBm2.Url,
+		"GetMostRecentBookmark() should return the most recently saved bookmark url")
 	// If it's finished, it shouldn't show up
 	recentBm.Finished = 1
 	err = recentBm.Save(db)
 	require.NoError(t, err)
-	recentUrl, err = GetMostRecentUrl(db)
+	recentBm2, err = GetMostRecentBookmark(db)
 	require.NoError(t, err)
-	require.NotNil(t, recentUrl)
-	require.Equal(t, bm.Url, recentUrl)
+	require.NotNil(t, recentBm2)
+	require.Equal(t, bm, recentBm2)
 
 	// Delete the bookmark
 	err = bm.Delete(db)

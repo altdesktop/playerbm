@@ -70,7 +70,7 @@ func parseProperties(propertiesVariant map[string]dbus.Variant) *Properties {
 	return &properties
 }
 
-func (player *Player) getProperties() (*Properties, error) {
+func (player *Player) GetPropertiesRemote() (*Properties, error) {
 	var propertiesVariant map[string]dbus.Variant
 	err := player.MprisObj.Call("org.freedesktop.DBus.Properties.GetAll", dbus.FlagNoAutoStart, "org.mpris.MediaPlayer2.Player").Store(&propertiesVariant)
 	if err != nil {
@@ -78,6 +78,17 @@ func (player *Player) getProperties() (*Properties, error) {
 	}
 
 	return parseProperties(propertiesVariant), nil
+}
+
+func (player *Player) SetPlayerProperties(properties *Properties) {
+	player.Status = properties.Status
+	player.TrackId = properties.TrackId
+	if properties.HasLength {
+		player.Length = properties.Length
+	}
+	if properties.HasPosition {
+		player.setPosition(properties.Position)
+	}
 }
 
 func (player *Player) syncBookmark(properties *Properties) {
@@ -94,7 +105,7 @@ func (player *Player) syncBookmark(properties *Properties) {
 		if err != nil {
 			log.Printf("[DEBUG] could not update current bookmark: %+v", err)
 		}
-		err = player.loadBookmark(properties.Url)
+		err = player.LoadBookmark(properties.Url)
 		if err != nil {
 			log.Printf("[DEBUG] could not load bookmark: %+v", err)
 		}
@@ -134,7 +145,7 @@ func (player *Player) syncBookmark(properties *Properties) {
 		// Run this if anything important has changed. This works around spec
 		// weirdness regarding position.
 		go func() {
-			properties, err := player.getProperties()
+			properties, err := player.GetPropertiesRemote()
 			if err != nil {
 				log.Printf("[DEBUG] could not get properties: %+v", err)
 				return
@@ -245,7 +256,7 @@ func (player *Player) handleNameOwnerChanged(message *dbus.Signal) bool {
 	return false
 }
 
-func (player *Player) loadBookmark(url *url.URL) error {
+func (player *Player) LoadBookmark(url *url.URL) error {
 	player.logCurrentBookmark()
 
 	if player.Bookmark != nil && player.Bookmark.Url == url {
@@ -260,7 +271,7 @@ func (player *Player) loadBookmark(url *url.URL) error {
 
 	if bookmark.Exists() {
 		log.Printf("[DEBUG] bookmark exists, syncing to position %s", FormatPosition(bookmark.Position))
-		time.Sleep(100 * time.Millisecond)
+		//time.Sleep(100 * time.Millisecond)
 		err = player.syncPosition(bookmark.Position)
 		if err != nil {
 			log.Printf("[DEBUG] could not sync position: %+v", err)
@@ -288,22 +299,39 @@ func (player *Player) updateBookmark() error {
 	return player.Bookmark.Save(player.DB)
 }
 
+var signalHandlersInstalled bool
+
 func (player *Player) installSignalHandlers() {
+	if signalHandlersInstalled {
+		return
+	}
+
 	go func() {
 		signals := make(chan os.Signal, 10)
 		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 		for {
 			s := <-signals
-			err := player.Cmd.Process.Signal(s)
-			if err != nil {
-				log.Printf("[WARNING] could not send signal to player process: %+v", err)
+			if player.Cmd != nil {
+				err := player.Cmd.Process.Signal(s)
+				if err != nil {
+					log.Printf("[WARNING] could not send signal to player process: %+v", err)
+				}
+			} else {
+				player.ExitCode = 130
+				player.Signals <- nil
 			}
 		}
 	}()
+
+	signalHandlersInstalled = true
 }
 
-func (player *Player) init() error {
-	busObj := player.Bus.BusObject()
+var matchSignalAdded bool
+
+func (player *Player) addNameOwnerChangedMatchSignal() error {
+	if matchSignalAdded {
+		return nil
+	}
 
 	err := player.Bus.AddMatchSignal(
 		dbus.WithMatchSender("org.freedesktop.DBus"),
@@ -311,6 +339,18 @@ func (player *Player) init() error {
 		dbus.WithMatchObjectPath("/org/freedesktop/DBus"),
 		dbus.WithMatchMember("NameOwnerChanged"),
 	)
+	if err != nil {
+		return err
+	}
+
+	matchSignalAdded = true
+	return nil
+}
+
+func (player *Player) initProcess() error {
+	busObj := player.Bus.BusObject()
+
+	err := player.addNameOwnerChangedMatchSignal()
 	if err != nil {
 		return err
 	}
@@ -327,6 +367,10 @@ func (player *Player) init() error {
 
 	go func() {
 		err = player.Cmd.Run()
+		if player.Cmd != nil {
+			player.ExitCode = player.Cmd.ProcessState.ExitCode()
+		}
+
 		c <- nil
 		player.ProcessFinish <- err
 	}()
@@ -386,55 +430,21 @@ func (player *Player) init() error {
 	return nil
 }
 
-func (player *Player) Run() error {
-	err := player.init()
+func (player *Player) RunCmd() error {
+	err := player.initProcess()
 	if err != nil {
 		return err
 	}
-	properties, err := player.getProperties()
+	properties, err := player.GetPropertiesRemote()
 	if err != nil {
 		return err
 	}
 
 	player.syncBookmark(properties)
-	player.installSignalHandlers()
 
-	defer func() {
-		err = player.updateBookmark()
-		if err != nil {
-			log.Printf("[DEBUG] could not update bookmark: %+v", err)
-		}
-	}()
-
-	// start the main loop
-	c := make(chan *dbus.Signal, 10)
-	player.Bus.Signal(c)
-	defer player.Bus.RemoveSignal(c)
-
-	err = player.Bus.AddMatchSignal(
-		dbus.WithMatchSender(player.NameOwner),
-		dbus.WithMatchObjectPath(mprisPath),
-	)
+	err = player.Manage()
 	if err != nil {
 		return err
-	}
-
-	for message := range c {
-		if message.Sender == player.NameOwner && message.Path == mprisPath {
-			if message.Name == "org.mpris.MediaPlayer2.Player.Seeked" {
-				player.handleSeeked(message)
-			} else if message.Name == "org.freedesktop.DBus.Properties.PropertiesChanged" {
-				iface := fmt.Sprintf("%s", message.Body[0])
-				if iface == "org.mpris.MediaPlayer2.Player" {
-					player.handlePropertiesChanged(message)
-				}
-			}
-		} else if message.Name == "org.freedesktop.DBus.NameOwnerChanged" && message.Sender == "org.freedesktop.DBus" {
-			if player.handleNameOwnerChanged(message) {
-				log.Printf("[DEBUG] name lost, shutting down")
-				break
-			}
-		}
 	}
 
 	return <-player.ProcessFinish
@@ -464,7 +474,9 @@ func (player *Player) SetName(name string) {
 }
 
 func (player *Player) EnsureBookmark() error {
-	properties, err := player.getProperties()
+	var err error
+
+	properties, err := player.GetPropertiesRemote()
 	if err != nil {
 		return err
 	}
@@ -482,6 +494,64 @@ func (player *Player) EnsureBookmark() error {
 		player.Bookmark = bookmark
 	} else {
 		return errors.New("player does not have a valid url")
+	}
+
+	return nil
+}
+
+func (player *Player) Manage() error {
+	player.installSignalHandlers()
+	err := player.addNameOwnerChangedMatchSignal()
+	if err != nil {
+		return err
+	}
+
+	if len(player.NameOwner) == 0 {
+		err = player.Bus.BusObject().Call(
+			"org.freedesktop.DBus.GetNameOwner", 0, player.BusName,
+		).Store(&player.NameOwner)
+		if err != nil {
+			return err
+		}
+	}
+
+	// start the main loop
+	player.Bus.Signal(player.Signals)
+	defer player.Bus.RemoveSignal(player.Signals)
+
+	err = player.Bus.AddMatchSignal(
+		dbus.WithMatchSender(player.NameOwner),
+		dbus.WithMatchObjectPath(mprisPath),
+	)
+	if err != nil {
+		return err
+	}
+
+	for message := range player.Signals {
+		if message == nil {
+			break
+		}
+
+		if message.Sender == player.NameOwner && message.Path == mprisPath {
+			if message.Name == "org.mpris.MediaPlayer2.Player.Seeked" {
+				player.handleSeeked(message)
+			} else if message.Name == "org.freedesktop.DBus.Properties.PropertiesChanged" {
+				iface := fmt.Sprintf("%s", message.Body[0])
+				if iface == "org.mpris.MediaPlayer2.Player" {
+					player.handlePropertiesChanged(message)
+				}
+			}
+		} else if message.Name == "org.freedesktop.DBus.NameOwnerChanged" && message.Sender == "org.freedesktop.DBus" {
+			if player.handleNameOwnerChanged(message) {
+				log.Printf("[DEBUG] name lost, shutting down")
+				break
+			}
+		}
+	}
+
+	err = player.updateBookmark()
+	if err != nil {
+		return err
 	}
 
 	return nil
