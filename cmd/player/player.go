@@ -355,12 +355,11 @@ func (player *Player) initProcess() error {
 		return err
 	}
 
-	c := make(chan *dbus.Signal, 10)
-	player.Bus.Signal(c)
-	defer player.Bus.RemoveSignal(c)
+	signals := make(chan *dbus.Signal, 10)
+	player.Bus.Signal(signals)
+	defer player.Bus.RemoveSignal(signals)
 
 	log.Printf("[DEBUG] %s", player.Cli.PlayerCmd)
-	// TODO: if the process exits nonzero, break the main loop
 	player.Cmd = exec.Command("/bin/bash", "-c", player.Cli.PlayerCmd)
 	player.Cmd.Stdout = os.Stdout
 	player.Cmd.Stderr = os.Stderr
@@ -371,59 +370,83 @@ func (player *Player) initProcess() error {
 			player.ExitCode = player.Cmd.ProcessState.ExitCode()
 		}
 
-		c <- nil
 		player.ProcessFinish <- err
 	}()
 
-	for message := range c {
-		if message == nil {
-			break
+	timeout := make(chan error, 10)
+	timeoutSeconds := time.Duration(10)
+	go func() {
+		time.Sleep(timeoutSeconds * time.Second)
+		if timeout != nil {
+			timeout <- errors.New("timeout")
 		}
-		name := fmt.Sprintf("%s", message.Body[0])
-		// oldOwner := fmt.Sprintf("%s", message.Body[1])
-		newOwner := fmt.Sprintf("%s", message.Body[2])
+	}()
+	defer func() {
+		close(timeout)
+		timeout = nil
+	}()
 
-		if !strings.HasPrefix(name, mprisPrefix) {
-			continue
-		}
+loop:
+	for {
+		select {
+		case message := <-signals:
+			name := fmt.Sprintf("%s", message.Body[0])
+			// oldOwner := fmt.Sprintf("%s", message.Body[1])
+			newOwner := fmt.Sprintf("%s", message.Body[2])
 
-		if len(newOwner) > 0 {
-			log.Printf("[DEBUG] a player appeared: name: %s, owner: %s", name, newOwner)
-			var pid int
-			err := busObj.Call("org.freedesktop.DBus.GetConnectionUnixProcessID", dbus.FlagNoAutoStart, name).Store(&pid)
-			if err != nil {
-				log.Printf("[DEBUG] could not get process id: %+v", err)
+			if !strings.HasPrefix(name, mprisPrefix) {
 				continue
 			}
-			log.Printf("[DEBUG] pid: %d", pid)
-			processMatch, err := isChildProcess(player.Cmd.Process.Pid, pid)
-			if err != nil {
-				log.Printf("[DEBUG] could not get process info: %+v", err)
-				continue
+
+			if len(newOwner) > 0 {
+				log.Printf("[DEBUG] a player appeared: name: %s, owner: %s", name, newOwner)
+				var pid int
+				err := busObj.Call("org.freedesktop.DBus.GetConnectionUnixProcessID", dbus.FlagNoAutoStart, name).Store(&pid)
+				if err != nil {
+					log.Printf("[DEBUG] could not get process id: %+v", err)
+					continue
+				}
+				log.Printf("[DEBUG] pid: %d", pid)
+				processMatch, err := isChildProcess(player.Cmd.Process.Pid, pid)
+				if err != nil {
+					log.Printf("[DEBUG] could not get process info: %+v", err)
+					continue
+				}
+				if processMatch {
+					log.Printf("[DEBUG] managing player")
+					player.BusName = name
+					player.NameOwner = newOwner
+					player.MprisObj = player.Bus.Object(name, mprisPath)
+					break loop
+				}
 			}
-			// TODO handle the case where no process is opened directly, but
-			// the file is opened through ipc to an existing process. Firefox
-			// does this.
-			if processMatch {
-				log.Printf("[DEBUG] managing player")
-				player.BusName = name
-				player.NameOwner = newOwner
-				player.MprisObj = player.Bus.Object(name, mprisPath)
-				break
-			}
+		case err = <-player.ProcessFinish:
+			break loop
+		case err = <-timeout:
+			break loop
 		}
 	}
 
 	if player.MprisObj == nil {
-		if player.Cmd.ProcessState.Exited() {
+		if player.Cmd.ProcessState != nil && player.Cmd.ProcessState.Exited() {
 			exitCode := player.Cmd.ProcessState.ExitCode()
+
+			if exitCode == 0 {
+				// TODO handle the case where no process is opened directly, but
+				// the file is opened through ipc to an existing process. Firefox
+				// does this.
+			}
+
 			err = &PlayerCmdError{
 				err:      fmt.Sprintf("player process exited unexpectedly (exit %d)", exitCode),
 				ExitCode: exitCode,
 			}
 			return err
 		} else {
-			panic("should not be reached (TODO: implement the dbus timeout)")
+			return &PlayerCmdError{
+				err:      fmt.Sprintf("player did not start within %d seconds", timeoutSeconds),
+				ExitCode: 1,
+			}
 		}
 	}
 
