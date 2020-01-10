@@ -2,7 +2,7 @@ package cli
 
 import (
 	"fmt"
-	"github.com/altdesktop/playerbm/cmd/model"
+	"github.com/altdesktop/playerbm/internal/model"
 	"github.com/kballard/go-shellquote"
 	"log"
 	"strings"

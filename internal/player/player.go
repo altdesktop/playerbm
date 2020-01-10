@@ -3,7 +3,7 @@ package player
 import (
 	"errors"
 	"fmt"
-	"github.com/altdesktop/playerbm/cmd/model"
+	"github.com/altdesktop/playerbm/internal/model"
 	"github.com/godbus/dbus/v5"
 	"log"
 	"os"

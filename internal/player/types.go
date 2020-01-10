@@ -2,8 +2,8 @@ package player
 
 import (
 	"database/sql"
-	"github.com/altdesktop/playerbm/cmd/cli"
-	"github.com/altdesktop/playerbm/cmd/model"
+	"github.com/altdesktop/playerbm/internal/cli"
+	"github.com/altdesktop/playerbm/internal/model"
 	"github.com/godbus/dbus/v5"
 	"os/exec"
 	"time"

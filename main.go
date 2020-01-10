@@ -3,9 +3,9 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"github.com/altdesktop/playerbm/cmd/cli"
-	"github.com/altdesktop/playerbm/cmd/model"
-	"github.com/altdesktop/playerbm/cmd/player"
+	"github.com/altdesktop/playerbm/internal/cli"
+	"github.com/altdesktop/playerbm/internal/model"
+	"github.com/altdesktop/playerbm/internal/player"
 	"github.com/godbus/dbus/v5"
 	"github.com/hashicorp/logutils"
 	"github.com/kyoh86/xdg"
