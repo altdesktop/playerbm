@@ -314,6 +314,8 @@ func (player *Player) installSignalHandlers() {
 				err := player.Cmd.Process.Signal(s)
 				if err != nil {
 					log.Printf("[WARNING] could not send signal to player process: %+v", err)
+					player.ExitCode = 130
+					player.Signals <- nil
 				}
 			} else {
 				player.ExitCode = 130
@@ -354,6 +356,18 @@ func (player *Player) initProcess() error {
 		return err
 	}
 
+	// listen to any property changed signals of media players
+	playerPropertiesMatch := []dbus.MatchOption{
+		dbus.WithMatchInterface("org.freedesktop.DBus.Properties"),
+		dbus.WithMatchObjectPath(mprisPath),
+		dbus.WithMatchMember("PropertiesChanged"),
+	}
+	err = player.Bus.AddMatchSignal(playerPropertiesMatch...)
+	if err != nil {
+		return err
+	}
+	defer player.Bus.RemoveMatchSignal(playerPropertiesMatch...)
+
 	signals := make(chan *dbus.Signal, 10)
 	player.Bus.Signal(signals)
 	defer player.Bus.RemoveSignal(signals)
@@ -373,7 +387,7 @@ func (player *Player) initProcess() error {
 	}()
 
 	timeout := make(chan error, 10)
-	timeoutSeconds := time.Duration(10)
+	timeoutSeconds := time.Duration(20)
 	go func() {
 		time.Sleep(timeoutSeconds * time.Second)
 		if timeout != nil {
@@ -385,16 +399,15 @@ func (player *Player) initProcess() error {
 		timeout = nil
 	}()
 
-loop:
-	for {
-		select {
-		case message := <-signals:
+	signalHandler := func(message *dbus.Signal) bool {
+		log.Printf("[DEBUG] got signal: %+v", message)
+		if message.Name == "org.freedesktop.DBus.NameOwnerChanged" {
 			name := fmt.Sprintf("%s", message.Body[0])
 			// oldOwner := fmt.Sprintf("%s", message.Body[1])
 			newOwner := fmt.Sprintf("%s", message.Body[2])
 
 			if !strings.HasPrefix(name, mprisPrefix) {
-				continue
+				return false
 			}
 
 			if len(newOwner) > 0 {
@@ -403,53 +416,126 @@ loop:
 				err := busObj.Call("org.freedesktop.DBus.GetConnectionUnixProcessID", dbus.FlagNoAutoStart, name).Store(&pid)
 				if err != nil {
 					log.Printf("[DEBUG] could not get process id: %+v", err)
-					continue
+					return false
 				}
 				log.Printf("[DEBUG] pid: %d", pid)
 				processMatch, err := isChildProcess(player.Cmd.Process.Pid, pid)
 				if err != nil {
 					log.Printf("[DEBUG] could not get process info: %+v", err)
-					continue
+					return false
 				}
 				if processMatch {
-					log.Printf("[DEBUG] managing player")
+					log.Printf("[DEBUG] managing player by process id detection")
 					player.BusName = name
 					player.NameOwner = newOwner
 					player.MprisObj = player.Bus.Object(name, mprisPath)
-					break loop
+					return true
 				}
 			}
+		} else if message.Name == "org.freedesktop.DBus.Properties.PropertiesChanged" && message.Path == mprisPath {
+			if player.Cli.ResumeFile == nil {
+				// we can't handle this signal without a file to resume
+				return false
+			}
+
+			iface := fmt.Sprintf("%s", message.Body[0])
+			if iface != "org.mpris.MediaPlayer2.Player" {
+				return false
+			}
+			if propertiesVariant, ok := message.Body[1].(map[string]dbus.Variant); ok {
+				properties := parseProperties(propertiesVariant)
+				if properties.Url != nil && properties.Url.String() == player.Cli.ResumeFile.String() {
+					log.Printf("[DEBUG] matched a player by url detection")
+					// We have to find the name for this sender. This the best
+					// way I can think of doing it right now, but it's a lot of
+					// dbus calls.
+					players, err := ListPlayers(player.Bus)
+					if err != nil {
+						log.Printf("[DEBUG] could not list names: %+v", err)
+						return false
+					}
+
+					for _, name := range players {
+						busName := fmt.Sprintf("%s%s", mprisPrefix, name)
+						var nameOwner string
+						err = busObj.Call("org.freedesktop.DBus.GetNameOwner", 0, busName).Store(&nameOwner)
+						if err != nil {
+							log.Printf("[DEBUG] could not get name owner for: %s", busName)
+							continue
+						}
+						if nameOwner == message.Sender {
+							log.Printf("[DEBUG] managing player with bus name: %s", busName)
+							player.BusName = busName
+							player.NameOwner = nameOwner
+							player.MprisObj = player.Bus.Object(busName, mprisPath)
+							return true
+						}
+					}
+
+					return false
+				}
+			}
+		}
+
+		return false
+	}
+
+loop:
+	for {
+		select {
+		case message := <-signals:
+			if signalHandler(message) {
+				break loop
+			}
 		case err = <-player.ProcessFinish:
+			close(player.ProcessFinish)
+			player.ProcessFinish = nil
 			break loop
 		case err = <-timeout:
 			break loop
 		}
 	}
 
-	if player.MprisObj == nil {
-		if player.Cmd.ProcessState != nil && player.Cmd.ProcessState.Exited() {
-			exitCode := player.Cmd.ProcessState.ExitCode()
+	if player.MprisObj != nil {
+		return nil
+	}
 
-			if exitCode == 0 && player.Cli.ResumeFile != nil {
-				// TODO handle the case where no process is opened directly, but
-				// the file is opened through ipc to an existing process. Firefox
-				// does this.
-			}
+	if player.Cmd.ProcessState != nil && player.Cmd.ProcessState.Exited() {
+		exitCode := player.Cmd.ProcessState.ExitCode()
 
-			err = &PlayerCmdError{
+		if exitCode != 0 || player.Cli.ResumeFile == nil {
+			return &PlayerCmdError{
 				err:      fmt.Sprintf("player process exited unexpectedly (exit %d)", exitCode),
 				ExitCode: exitCode,
 			}
-			return err
-		} else {
+		}
+
+	loop2:
+		for {
+			select {
+			case message := <-signals:
+				if signalHandler(message) {
+					break loop2
+				}
+			case err = <-timeout:
+				break loop2
+			}
+		}
+
+		if player.MprisObj == nil {
 			return &PlayerCmdError{
 				err:      fmt.Sprintf("player did not start within %d seconds", timeoutSeconds),
 				ExitCode: 1,
 			}
+		} else {
+			return nil
+		}
+	} else {
+		return &PlayerCmdError{
+			err:      fmt.Sprintf("player did not start within %d seconds", timeoutSeconds),
+			ExitCode: 1,
 		}
 	}
-
-	return nil
 }
 
 func (player *Player) RunCmd() error {
@@ -469,7 +555,11 @@ func (player *Player) RunCmd() error {
 		return err
 	}
 
-	return <-player.ProcessFinish
+	if player.ProcessFinish != nil {
+		return <-player.ProcessFinish
+	} else {
+		return nil
+	}
 }
 
 func (player *Player) HasBookmark() bool {
