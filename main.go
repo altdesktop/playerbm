@@ -106,6 +106,10 @@ func main() {
 
 	args, err := cli.ParseArgs(os.Args)
 	if err != nil {
+		if cliErr, ok := err.(*cli.CliError); ok {
+			fmt.Printf("playerbm: %s\n", cliErr.Error())
+			os.Exit(1)
+		}
 		log.Fatal(err)
 	}
 
@@ -143,6 +147,32 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if args.DeleteFlag {
+		bookmarks, err := model.ListBookmarks(db)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		var found bool
+		for _, bm := range bookmarks {
+			if bm.Url.String() == args.DeleteUrl.String() {
+				fmt.Printf("playerbm: deleting bookmark\n")
+				err = bm.Delete(db)
+				if err != nil {
+					log.Fatal(err)
+				}
+				found = true
+			}
+		}
+
+		if !found {
+			fmt.Printf("playerbm: no bookmark found for url: %s\n", args.DeleteUrl.String())
+			os.Exit(1)
+		}
+
+		os.Exit(0)
+	}
+
 	if args.ResumeFlag {
 		var err error
 
@@ -152,7 +182,7 @@ func main() {
 			os.Exit(127)
 		}
 
-		if args.ResumeFile == nil {
+		if args.ResumeUrl == nil {
 			bookmark, err := model.GetMostRecentBookmark(db)
 			if err != nil {
 				log.Fatal(err)
@@ -161,7 +191,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "No recent unfinished bookmarks found\n")
 				os.Exit(0)
 			}
-			args.ResumeFile = bookmark.Url
+			args.ResumeUrl = bookmark.Url
 		}
 
 		names, err := player.ListPlayers(bus)
@@ -178,9 +208,9 @@ func main() {
 				continue
 			}
 			p.SetPlayerProperties(properties)
-			if properties.Url != nil && (properties.Url.String() == args.ResumeFile.String()) {
+			if properties.Url != nil && (properties.Url.String() == args.ResumeUrl.String()) {
 				log.Printf("[DEBUG] found a running player")
-				err = p.LoadBookmark(args.ResumeFile)
+				err = p.LoadBookmark(args.ResumeUrl)
 				if err != nil {
 					log.Printf("[WARNING] could not load bookmark for player: %s", name)
 					continue
@@ -194,7 +224,7 @@ func main() {
 			}
 		}
 
-		quoted, err := args.ResumeFile.ShellQuoted()
+		quoted, err := args.ResumeUrl.ShellQuoted()
 		if err != nil {
 			log.Fatal(err)
 		}

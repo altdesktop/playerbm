@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"github.com/altdesktop/playerbm/cmd/model"
 	"github.com/kballard/go-shellquote"
@@ -16,9 +15,11 @@ type PbmCli struct {
 	HelpFlag          bool
 	VersionFlag       bool
 	ResumeFlag        bool
-	ResumeFile        *model.XesamUrl
+	ResumeUrl         *model.XesamUrl
 	SaveFlag          bool
 	SavePlayers       string
+	DeleteFlag        bool
+	DeleteUrl         *model.XesamUrl
 }
 
 const HelpString = `playerbm [OPTION…] PLAYER_COMMAND
@@ -41,11 +42,12 @@ Example:
 Options:
    -l, --list-bookmarks  List all bookmarks and exit.
    -L, --list-players    List all running players that can be controlled.
-   -r, --resume=[FILE]   Launch a player and resume playing FILE from the last
+   -r, --resume=[URL]    Launch a player and resume playing URL from the last
                          saved bookmark and begin managing bookmarks. (default:
                          file of the last saved bookmark)
    -s, --save=[PLAYER]   Save bookmarks for the running players in a comma
                          separated list. (default: all running players)
+   -d, --delete={URL}    Delete the bookmark for the given url.
    -h, --help            Show help.
    -v, --version         Print the version.` + "\n"
 
@@ -65,6 +67,18 @@ type StringFlag struct {
 	ArgValue        *string
 }
 
+type CliError struct {
+	err string
+}
+
+func (e *CliError) Error() string {
+	return e.err
+}
+
+func newCliError(format string, args ...interface{}) *CliError {
+	return &CliError{err: fmt.Sprintf(format, args...)}
+}
+
 func parseBoolFlag(arg string, flag BoolFlag) (bool, error) {
 	if arg == flag.Short || arg == flag.Long {
 		*flag.Value = true
@@ -72,7 +86,7 @@ func parseBoolFlag(arg string, flag BoolFlag) (bool, error) {
 	}
 
 	if strings.HasPrefix(arg, flag.Short+"=") || strings.HasPrefix(arg, flag.Long+"=") {
-		return false, errors.New(fmt.Sprintf("no argument expected for %s, %s flag", flag.Short, flag.Long))
+		return false, newCliError("no argument expected for %s, %s flag", flag.Short, flag.Long)
 	}
 
 	return false, nil
@@ -112,10 +126,12 @@ func ParseArgs(args []string) (*PbmCli, error) {
 		BoolFlag{Short: "-L", Long: "--list-players", Value: &cli.ListPlayersFlag},
 	}
 
-	var url string
+	var resumeUrl string
+	var deleteUrl string
 	stringFlags := []StringFlag{
 		StringFlag{Short: "-s", Long: "--save", Present: &cli.SaveFlag, ArgValue: &cli.SavePlayers},
-		StringFlag{Short: "-r", Long: "--resume", Present: &cli.ResumeFlag, ArgValue: &url},
+		StringFlag{Short: "-r", Long: "--resume", Present: &cli.ResumeFlag, ArgValue: &resumeUrl},
+		StringFlag{Short: "-d", Long: "--delete", Present: &cli.DeleteFlag, ArgValue: &deleteUrl},
 	}
 
 	firstPlayerArg := -1
@@ -162,7 +178,7 @@ func ParseArgs(args []string) (*PbmCli, error) {
 			}
 
 			if !match {
-				return nil, errors.New(fmt.Sprintf("unknown argument: %s", arg))
+				return nil, newCliError("unknown argument: %s", arg)
 			}
 		} else {
 			firstPlayerArg = i
@@ -170,8 +186,21 @@ func ParseArgs(args []string) (*PbmCli, error) {
 		}
 	}
 
-	if cli.ResumeFlag && len(url) > 0 {
-		cli.ResumeFile, err = model.ParseXesamUrl(url)
+	if cli.ResumeFlag && len(resumeUrl) > 0 {
+		cli.ResumeUrl, err = model.ParseXesamUrl(resumeUrl)
+		if err != nil {
+			return nil, newCliError("could not parse url: %s", resumeUrl)
+		}
+	}
+
+	if cli.DeleteFlag {
+		if len(deleteUrl) == 0 {
+			return nil, newCliError("a URL argument is required for the delete flag")
+		}
+		cli.DeleteUrl, err = model.ParseXesamUrl(deleteUrl)
+		if err != nil {
+			return nil, newCliError("could not parse url: %s", deleteUrl)
+		}
 	}
 
 	if firstPlayerArg != -1 {

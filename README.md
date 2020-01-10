@@ -57,7 +57,7 @@ playerbm should support any media player that implements the [MPRIS D-Bus Interf
 
 Known working players:
 
-* [mpv](https://github.com/mpv-player/mpv) with [mpv-mpris](https://github.com/hoyon/mpv-mpris) plugin.
+* [mpv](https://github.com/mpv-player/mpv) with [mpv-mpris](https://github.com/hoyon/mpv-mpris) plugin
 * [smplayer](https://www.smplayer.info/)
 
 ## License

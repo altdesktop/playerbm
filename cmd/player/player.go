@@ -433,7 +433,7 @@ func (player *Player) initProcess() error {
 				}
 			}
 		} else if message.Name == "org.freedesktop.DBus.Properties.PropertiesChanged" && message.Path == mprisPath {
-			if player.Cli.ResumeFile == nil {
+			if player.Cli.ResumeUrl == nil {
 				// we can't handle this signal without a file to resume
 				return false
 			}
@@ -444,7 +444,7 @@ func (player *Player) initProcess() error {
 			}
 			if propertiesVariant, ok := message.Body[1].(map[string]dbus.Variant); ok {
 				properties := parseProperties(propertiesVariant)
-				if properties.Url != nil && properties.Url.String() == player.Cli.ResumeFile.String() {
+				if properties.Url != nil && properties.Url.String() == player.Cli.ResumeUrl.String() {
 					log.Printf("[DEBUG] matched a player by url detection")
 					// We have to find the name for this sender. This the best
 					// way I can think of doing it right now, but it's a lot of
@@ -503,7 +503,7 @@ loop:
 	if player.Cmd.ProcessState != nil && player.Cmd.ProcessState.Exited() {
 		exitCode := player.Cmd.ProcessState.ExitCode()
 
-		if exitCode != 0 || player.Cli.ResumeFile == nil {
+		if exitCode != 0 || player.Cli.ResumeUrl == nil {
 			return &PlayerCmdError{
 				err:      fmt.Sprintf("player process exited unexpectedly (exit %d)", exitCode),
 				ExitCode: exitCode,
