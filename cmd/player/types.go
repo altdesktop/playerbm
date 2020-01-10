@@ -5,7 +5,6 @@ import (
 	"github.com/altdesktop/playerbm/cmd/cli"
 	"github.com/altdesktop/playerbm/cmd/model"
 	"github.com/godbus/dbus/v5"
-	"net/url"
 	"os/exec"
 	"time"
 )
@@ -61,7 +60,7 @@ type Properties struct {
 	HasPosition bool
 	Length      int64
 	HasLength   bool
-	Url         *url.URL
+	Url         *model.XesamUrl
 	Status      string
 	TrackId     dbus.ObjectPath
 }

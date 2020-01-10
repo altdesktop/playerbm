@@ -6,7 +6,6 @@ import (
 	"github.com/altdesktop/playerbm/cmd/model"
 	"github.com/godbus/dbus/v5"
 	"log"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -156,7 +155,7 @@ func (player *Player) syncBookmark(properties *Properties) {
 	}
 }
 
-func (player *Player) currentUrl() *url.URL {
+func (player *Player) currentUrl() *model.XesamUrl {
 	if player.Bookmark == nil {
 		return nil
 	}
@@ -256,7 +255,7 @@ func (player *Player) handleNameOwnerChanged(message *dbus.Signal) bool {
 	return false
 }
 
-func (player *Player) LoadBookmark(url *url.URL) error {
+func (player *Player) LoadBookmark(url *model.XesamUrl) error {
 	player.logCurrentBookmark()
 
 	if player.Bookmark != nil && player.Bookmark.Url == url {
@@ -431,7 +430,7 @@ loop:
 		if player.Cmd.ProcessState != nil && player.Cmd.ProcessState.Exited() {
 			exitCode := player.Cmd.ProcessState.ExitCode()
 
-			if exitCode == 0 {
+			if exitCode == 0 && player.Cli.ResumeFile != nil {
 				// TODO handle the case where no process is opened directly, but
 				// the file is opened through ipc to an existing process. Firefox
 				// does this.

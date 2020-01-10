@@ -10,7 +10,6 @@ import (
 	"github.com/hashicorp/logutils"
 	"github.com/kyoh86/xdg"
 	"log"
-	urllib "net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -38,7 +37,7 @@ func handleListBookmarks(db *sql.DB) error {
 	maxUrlLen := 0
 	for _, b := range bookmarks {
 		// TODO update me for http scheme
-		quoted, err := model.UrlShellQuoted(b.Url)
+		quoted, err := b.Url.ShellQuoted()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -146,7 +145,6 @@ func main() {
 
 	if args.ResumeFlag {
 		var err error
-		var url *urllib.URL
 
 		xdgOpen, err := exec.LookPath("xdg-open")
 		if err != nil {
@@ -154,13 +152,7 @@ func main() {
 			os.Exit(127)
 		}
 
-		if len(args.ResumeFile) > 0 {
-			url, err = model.ParseXesamUrl(args.ResumeFile)
-			if err != nil {
-				fmt.Printf("playerbm: got invalid url for --resume flag: %s\n", args.ResumeFile)
-				os.Exit(1)
-			}
-		} else {
+		if args.ResumeFile == nil {
 			bookmark, err := model.GetMostRecentBookmark(db)
 			if err != nil {
 				log.Fatal(err)
@@ -169,7 +161,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "No recent unfinished bookmarks found\n")
 				os.Exit(0)
 			}
-			url = bookmark.Url
+			args.ResumeFile = bookmark.Url
 		}
 
 		names, err := player.ListPlayers(bus)
@@ -186,9 +178,9 @@ func main() {
 				continue
 			}
 			p.SetPlayerProperties(properties)
-			if properties.Url != nil && (properties.Url.String() == url.String()) {
+			if properties.Url != nil && (properties.Url.String() == args.ResumeFile.String()) {
 				log.Printf("[DEBUG] found a running player")
-				err = p.LoadBookmark(url)
+				err = p.LoadBookmark(args.ResumeFile)
 				if err != nil {
 					log.Printf("[WARNING] could not load bookmark for player: %s", name)
 					continue
@@ -202,7 +194,7 @@ func main() {
 			}
 		}
 
-		quoted, err := model.UrlShellQuoted(url)
+		quoted, err := args.ResumeFile.ShellQuoted()
 		if err != nil {
 			log.Fatal(err)
 		}

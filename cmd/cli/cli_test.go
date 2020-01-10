@@ -76,13 +76,13 @@ func TestCliGoodPath(t *testing.T) {
 	cli, err = ParseArgs([]string{"playerbm", "--resume", "~/file.mp3"})
 	require.NoError(t, err)
 	require.True(t, cli.ResumeFlag)
-	require.Equal(t, "~/file.mp3", cli.ResumeFile)
+	require.Equal(t, "file://~/file.mp3", cli.ResumeFile.String())
 
 	cli, err = ParseArgs([]string{"playerbm", "-r", "~/file.mp3"})
 	require.NoError(t, err)
 	require.True(t, cli.ResumeFlag)
-	require.Equal(t, "~/file.mp3", cli.ResumeFile)
+	require.Equal(t, "file://~/file.mp3", cli.ResumeFile.String())
 }
 
 // TODO
-// func TestCliBadPath(t *testing.T) {
+// func TestCliBadPath(t *testing.T) {}

@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"github.com/altdesktop/playerbm/cmd/model"
 	"github.com/kballard/go-shellquote"
 	"log"
 	"strings"
@@ -15,7 +16,7 @@ type PbmCli struct {
 	HelpFlag          bool
 	VersionFlag       bool
 	ResumeFlag        bool
-	ResumeFile        string
+	ResumeFile        *model.XesamUrl
 	SaveFlag          bool
 	SavePlayers       string
 }
@@ -93,6 +94,8 @@ func parseStringFlag(arg string, flag StringFlag) (bool, bool, error) {
 }
 
 func ParseArgs(args []string) (*PbmCli, error) {
+	var err error
+
 	log.Printf("[DEBUG] parsing arguments: %v", args)
 
 	cli := PbmCli{}
@@ -109,9 +112,10 @@ func ParseArgs(args []string) (*PbmCli, error) {
 		BoolFlag{Short: "-L", Long: "--list-players", Value: &cli.ListPlayersFlag},
 	}
 
+	var url string
 	stringFlags := []StringFlag{
 		StringFlag{Short: "-s", Long: "--save", Present: &cli.SaveFlag, ArgValue: &cli.SavePlayers},
-		StringFlag{Short: "-r", Long: "--resume", Present: &cli.ResumeFlag, ArgValue: &cli.ResumeFile},
+		StringFlag{Short: "-r", Long: "--resume", Present: &cli.ResumeFlag, ArgValue: &url},
 	}
 
 	firstPlayerArg := -1
@@ -124,7 +128,6 @@ func ParseArgs(args []string) (*PbmCli, error) {
 
 		if strings.HasPrefix(arg, "-") {
 			var match bool
-			var err error
 
 			for _, flag := range boolFlags {
 				match, err = parseBoolFlag(arg, flag)
@@ -159,12 +162,16 @@ func ParseArgs(args []string) (*PbmCli, error) {
 			}
 
 			if !match {
-				return nil, errors.New(fmt.Sprintf("Unknown argument: %s", arg))
+				return nil, errors.New(fmt.Sprintf("unknown argument: %s", arg))
 			}
 		} else {
 			firstPlayerArg = i
 			break
 		}
+	}
+
+	if cli.ResumeFlag && len(url) > 0 {
+		cli.ResumeFile, err = model.ParseXesamUrl(url)
 	}
 
 	if firstPlayerArg != -1 {

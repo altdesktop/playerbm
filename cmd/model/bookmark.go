@@ -4,18 +4,18 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
-	"github.com/kballard/go-shellquote"
 	"io"
 	"log"
-	urllib "net/url"
 	"os"
 	"syscall"
 	"time"
 )
 
+var finishedThreshold = int64(1e+7)
+
 type Bookmark struct {
 	Id          int64
-	Url         *urllib.URL
+	Url         *XesamUrl
 	Hash        string
 	Position    int64
 	Length      int64
@@ -48,12 +48,12 @@ func sha256sum(file *os.File) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-func getFileSchemeBookmark(db *sql.DB, url *urllib.URL) (*Bookmark, error) {
+func getFileSchemeBookmark(db *sql.DB, url *XesamUrl) (*Bookmark, error) {
 	log.Printf("[DEBUG] getting bookmark from file scheme path")
 	// Identified by the hash with filesystem heuristics to avoid reading the
 	// whole file when not necessary
 	var stat syscall.Stat_t
-	err := syscall.Stat(url.Path, &stat)
+	err := syscall.Stat(url.Path(), &stat)
 	if err != nil {
 		// TODO: relax the requirement that the file must exist
 		return nil, &FileError{err: "File does not exist"}
@@ -87,7 +87,7 @@ func getFileSchemeBookmark(db *sql.DB, url *urllib.URL) (*Bookmark, error) {
 		return &bm, nil
 	} else if err == sql.ErrNoRows {
 		// Second try: read the file and try to find it by the hash
-		f, err := os.Open(url.Path)
+		f, err := os.Open(url.Path())
 		if err != nil {
 			return nil, err
 		}
@@ -124,7 +124,7 @@ func getFileSchemeBookmark(db *sql.DB, url *urllib.URL) (*Bookmark, error) {
 	return &bm, nil
 }
 
-func getOtherSchemeBookmark(db *sql.DB, url *urllib.URL) (*Bookmark, error) {
+func getOtherSchemeBookmark(db *sql.DB, url *XesamUrl) (*Bookmark, error) {
 	bookmark := Bookmark{Url: url}
 
 	stmt, err := db.Prepare(`
@@ -182,35 +182,8 @@ func ListBookmarks(db *sql.DB) ([]Bookmark, error) {
 	return bookmarks, nil
 }
 
-func ParseXesamUrl(xesamUrl string) (*urllib.URL, error) {
-	url, err := urllib.Parse(xesamUrl)
-	if err != nil {
-		return nil, err
-	}
-
-	if url.Scheme == "" {
-		url.Scheme = "file"
-	}
-
-	return url, nil
-}
-
-func UrlShellQuoted(url *urllib.URL) (string, error) {
-	var urlString string
-	if url.Scheme == "file" {
-		urlString = url.Path
-	} else {
-		urlString = url.String()
-	}
-	unescaped, err := urllib.PathUnescape(urlString)
-	if err != nil {
-		return "", err
-	}
-	return shellquote.Join(unescaped), nil
-}
-
-func GetBookmark(db *sql.DB, url *urllib.URL) (*Bookmark, error) {
-	if url.Scheme == "file" {
+func GetBookmark(db *sql.DB, url *XesamUrl) (*Bookmark, error) {
+	if url.Scheme() == "file" {
 		return getFileSchemeBookmark(db, url)
 	} else {
 		return getOtherSchemeBookmark(db, url)
@@ -285,13 +258,6 @@ func abs(x int64) int64 {
 }
 
 func updateBookmark(bm *Bookmark, db *sql.DB) error {
-	threshold := int64(1e+7)
-	if bm.Length > 0 {
-		if abs(bm.Length-bm.Position) < threshold || bm.Position > bm.Length {
-			bm.Finished = 1
-		}
-	}
-
 	now := time.Now().Unix()
 	stmt, err := db.Prepare(`
     update bookmarks
@@ -313,6 +279,15 @@ func updateBookmark(bm *Bookmark, db *sql.DB) error {
 }
 
 func (bm *Bookmark) Save(db *sql.DB) error {
+	if bm.Length > 0 {
+		if abs(bm.Length-bm.Position) < finishedThreshold || bm.Position > bm.Length {
+			bm.Finished = 1
+			bm.Position = 0
+		} else {
+			bm.Finished = 0
+		}
+	}
+
 	if bm.needsCreate {
 		return createBookmark(bm, db)
 	} else {

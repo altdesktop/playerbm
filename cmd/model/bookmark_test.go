@@ -43,22 +43,23 @@ func TestBookmarkSave(t *testing.T) {
 	// Update the position and length, save the bookmark, and make sure it propagates to
 	// the database
 	require.Equal(t, bm.Position, int64(0))
-	bm.Position = int64(1000)
+	bm.Position = int64(1e+10 - 1000)
 	bm.Length = int64(1e+10)
-	bm.Finished = 1
 	bm.Save(db)
 	url, err = ParseXesamUrl("file://" + f.Name())
 	bm, err = GetBookmark(db, url)
 	require.NoError(t, err)
-	require.Equal(t, bm.Position, int64(1000),
-		"The position should be saved correctly for the bookmark")
+	require.Equal(t, bm.Position, int64(0),
+		"The position should be reset to zero if the bookmark is at the end")
 	require.Equal(t, bm.Length, int64(1e+10),
 		"The length should be saved correctly for the bookmark")
 	require.Equal(t, bm.Finished, 1,
-		"The finished flag should be saved correctly for the bookmark")
+		"The finished flag should be set if at the end")
 	// Reset the finish flag for the next tests
-	bm.Finished = 0
+	bm.Position = int64(1000)
 	require.NoError(t, bm.Save(db))
+	require.Equal(t, bm.Finished, 0, "The finished flag should be reset if it goes back to the middle")
+	require.Equal(t, bm.Position, int64(1000), "The position should be updated correctly")
 
 	// Make sure listing the bookmarks works
 	bookmarks, err := ListBookmarks(db)
