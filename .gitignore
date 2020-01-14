@@ -1,5 +1,6 @@
 /run.sh
 /playerbm
+*.opus
 *.swp
 *.swo
 *.db

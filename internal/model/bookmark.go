@@ -53,7 +53,7 @@ func getFileSchemeBookmark(db *sql.DB, url *XesamUrl) (*Bookmark, error) {
 	// Identified by the hash with filesystem heuristics to avoid reading the
 	// whole file when not necessary
 	var stat syscall.Stat_t
-	err := syscall.Stat(url.Path(), &stat)
+	err := syscall.Stat(url.UnescapedPath(), &stat)
 	if err != nil {
 		// TODO: relax the requirement that the file must exist
 		return nil, &FileError{err: "File does not exist"}
@@ -87,7 +87,7 @@ func getFileSchemeBookmark(db *sql.DB, url *XesamUrl) (*Bookmark, error) {
 		return &bm, nil
 	} else if err == sql.ErrNoRows {
 		// Second try: read the file and try to find it by the hash
-		f, err := os.Open(url.Path())
+		f, err := os.Open(url.UnescapedPath())
 		if err != nil {
 			return nil, err
 		}

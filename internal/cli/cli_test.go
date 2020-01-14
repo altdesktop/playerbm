@@ -73,20 +73,37 @@ func TestCliGoodPath(t *testing.T) {
 	require.True(t, cli.SaveFlag)
 	require.Equal(t, "mpv", cli.SavePlayers)
 
-	cli, err = ParseArgs([]string{"playerbm", "--resume", "~/file.mp3"})
+	cli, err = ParseArgs([]string{"playerbm", "--resume", "/file.mp3"})
 	require.NoError(t, err)
 	require.True(t, cli.ResumeFlag)
-	require.Equal(t, "file://~/file.mp3", cli.ResumeUrl.String())
+	require.Equal(t, "file:///file.mp3", cli.ResumeUrl.String())
 
-	cli, err = ParseArgs([]string{"playerbm", "-r", "~/file.mp3"})
+	cli, err = ParseArgs([]string{"playerbm", "-r", "/file.mp3"})
 	require.NoError(t, err)
 	require.True(t, cli.ResumeFlag)
-	require.Equal(t, "file://~/file.mp3", cli.ResumeUrl.String())
+	require.Equal(t, "file:///file.mp3", cli.ResumeUrl.String())
 
-	cli, err = ParseArgs([]string{"playerbm", "-d", "~/file.mp3"})
+	cli, err = ParseArgs([]string{"playerbm", "-d", "/file.mp3"})
 	require.NoError(t, err)
 	require.True(t, cli.DeleteFlag)
-	require.Equal(t, "file://~/file.mp3", cli.DeleteUrl.String())
+	require.Equal(t, "file:///file.mp3", cli.DeleteUrl.String())
+
+}
+
+func TestFileWithSpaces(t *testing.T) {
+	cli, err := ParseArgs([]string{"playerbm", "-d", "/file with spaces.mp3"})
+	require.NoError(t, err)
+	require.Equal(t, "file:///file%20with%20spaces.mp3", cli.DeleteUrl.String())
+	quoted := cli.DeleteUrl.ShellQuoted()
+	require.Equal(t, quoted, "'/file with spaces.mp3'")
+
+	cli, err = ParseArgs([]string{"playerbm", "-d", "/Comedy - Ep.#3 A Secret Society (w_ Jason Ritter, Craig Cackowski, Amanda Lund, Chris Tallman)-9HuAXgbdFx4.opus"})
+	require.NoError(t, err)
+	require.Equal(t, "file", cli.DeleteUrl.Scheme())
+	quoted = cli.DeleteUrl.ShellQuoted()
+	require.NoError(t, err)
+	require.Equal(t, "'/Comedy - Ep.#3 A Secret Society (w_ Jason Ritter, Craig Cackowski, Amanda Lund, Chris Tallman)-9HuAXgbdFx4.opus'", quoted)
+	require.Equal(t, "/Comedy - Ep.#3 A Secret Society (w_ Jason Ritter, Craig Cackowski, Amanda Lund, Chris Tallman)-9HuAXgbdFx4.opus", cli.DeleteUrl.UnescapedPath())
 }
 
 // TODO

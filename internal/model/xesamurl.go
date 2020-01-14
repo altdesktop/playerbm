@@ -22,8 +22,21 @@ func ParseXesamUrl(xesamUrl string) (*XesamUrl, error) {
 	return &XesamUrl{base: url}, nil
 }
 
-func (xesamUrl *XesamUrl) Path() string {
-	return xesamUrl.base.Path
+func (xesamUrl *XesamUrl) UnescapedPath() string {
+	var path string
+	if xesamUrl.base.Scheme == "file" {
+		path = xesamUrl.String()[len("file://"):]
+	} else {
+		path = xesamUrl.base.Path
+	}
+	unescaped, err := urllib.PathUnescape(path)
+
+	if err != nil {
+		// xesamUrl type is valid by construction
+		panic(err)
+	}
+
+	return unescaped
 }
 
 func (xesamUrl *XesamUrl) String() string {
@@ -34,16 +47,16 @@ func (xesamUrl *XesamUrl) Scheme() string {
 	return xesamUrl.base.Scheme
 }
 
-func (xesamUrl *XesamUrl) ShellQuoted() (string, error) {
-	var urlString string
+func (xesamUrl *XesamUrl) ShellQuoted() string {
+	urlString := xesamUrl.base.String()
 	if xesamUrl.base.Scheme == "file" {
-		urlString = xesamUrl.base.Path
-	} else {
-		urlString = xesamUrl.base.String()
+		urlString = urlString[len("file://"):]
 	}
+
 	unescaped, err := urllib.PathUnescape(urlString)
 	if err != nil {
-		return "", err
+		// xesamUrl type is valid by construction
+		panic(err)
 	}
-	return shellquote.Join(unescaped), nil
+	return shellquote.Join(unescaped)
 }

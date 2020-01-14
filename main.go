@@ -37,10 +37,7 @@ func handleListBookmarks(db *sql.DB) error {
 	maxUrlLen := 0
 	for _, b := range bookmarks {
 		// TODO update me for http scheme
-		quoted, err := b.Url.ShellQuoted()
-		if err != nil {
-			log.Fatal(err)
-		}
+		quoted := b.Url.ShellQuoted()
 
 		// this is nice for me
 		if home != "" && strings.HasPrefix(quoted, home) {
@@ -224,7 +221,7 @@ func main() {
 			}
 		}
 
-		quoted, err := args.ResumeUrl.ShellQuoted()
+		quoted := args.ResumeUrl.ShellQuoted()
 		if err != nil {
 			log.Fatal(err)
 		}
