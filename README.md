@@ -45,6 +45,8 @@ playerbm --list-players
 playerbm --save mpv
 ```
 
+[Chat](https://discord.gg/UdbXHVX)
+
 ## Installing
 
 ```
